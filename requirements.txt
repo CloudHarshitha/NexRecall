@@ -5,3 +5,4 @@ langgraph
 chainlit
 python-dotenv
 langchain-text-splitters
+langchain-openai
