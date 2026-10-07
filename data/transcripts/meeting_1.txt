@@ -1,0 +1,11 @@
+Meeting: Project Architecture Review
+Date: 2026-10-01
+Attendees: Alice, Bob, Charlie
+
+Alice: Let's discuss the backend architecture for the Omni-Meeting Memory Agent.
+Bob: We decided to use ChromaDB for our local vector store because of its lightweight nature and fast similarity search capabilities.
+Charlie: That sounds good. What about the embedding model?
+Alice: We'll go with all-MiniLM-L6-v2. It creates 384-dimensional dense vectors which are highly optimized for semantic similarity tasks.
+Bob: Great. I'll take the action item to set up the ChromaDB instance.
+Alice: And Charlie, can you write the text chunking logic?
+Charlie: Action item assigned: I will implement the RecursiveCharacterTextSplitter by next Tuesday.
