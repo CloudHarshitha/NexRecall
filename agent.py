@@ -6,7 +6,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.graph import StateGraph, END
 
-from shared_schema import retrieve_meeting_context
+from retriever import retrieve_meeting_context
 
 # Configure the standard openai Python client via langchain_openai to point to Nexus AI
 llm = ChatOpenAI(
