@@ -1,0 +1,5 @@
+Alice: Welcome to the Q3 planning meeting.
+Bob: Hi everyone. The main agenda today is finalizing the budget.
+Alice: Yes, we need to cut costs by 10%.
+Bob: I will look into server costs and get back to you by Friday.
+Alice: Thanks, Bob. Meeting adjourned.
