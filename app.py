@@ -1,4 +1,6 @@
 import chainlit as cl
+from dotenv import load_dotenv
+load_dotenv()
 from langchain_core.messages import HumanMessage
 from agent import app_graph
 import asyncio
