@@ -9,11 +9,14 @@ from langgraph.graph import StateGraph, END
 from retriever import retrieve_meeting_context
 
 # Configure the standard openai Python client via langchain_openai to point to Nexus AI
-llm = ChatOpenAI(
-    model="gpt-4o",  # Can be configured based on requirements
-    api_key=os.environ.get("NEXUS_API_KEY", "default-key"),
-    base_url=os.environ.get("NEXUS_API_BASE_URL", "https://nexusapi.navigatelabs.ai")
-)
+_api_key = os.environ.get("NEXUS_API_KEY", "default-key")
+_base_url = os.environ.get("NEXUS_API_BASE_URL", "https://nexusapi.navigatelabs.ai")
+
+_llm_primary = ChatOpenAI(model="gemini-3.5-flash", api_key=_api_key, base_url=_base_url, max_retries=3)
+_llm_fallback_1 = ChatOpenAI(model="gemini-3.6-flash", api_key=_api_key, base_url=_base_url, max_retries=3)
+_llm_fallback_2 = ChatOpenAI(model="gemini-3.8-flash", api_key=_api_key, base_url=_base_url, max_retries=3)
+
+llm = _llm_primary.with_fallbacks([_llm_fallback_1, _llm_fallback_2])
 
 class AgentState(TypedDict):
     """
@@ -22,11 +25,13 @@ class AgentState(TypedDict):
     - context: Holds the retrieved meeting context from our mock DB.
     - intent: The classified intent (Action Items vs General History).
     - final_response: The generated response to show to the user.
+    - user_id: The ID of the user for scoped retrieval.
     """
     messages: Annotated[Sequence[BaseMessage], operator.add]
     context: list[dict]
     intent: str
     final_response: str
+    user_id: str
 
 def router_node(state: AgentState):
     """
@@ -53,7 +58,7 @@ def router_node(state: AgentState):
         intent = "General History"
         
     # Pre-fetch the context based on the query for the downstream nodes
-    context = retrieve_meeting_context(user_query)
+    context = retrieve_meeting_context(user_query, state["user_id"])
         
     return {"intent": intent, "context": context}
 

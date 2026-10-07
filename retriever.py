@@ -18,7 +18,7 @@ except Exception as e:
     embedding_model = None
     collection = None
 
-def retrieve_meeting_context(query: str, top_k: int = 3) -> List[Dict[str, Any]]:
+def retrieve_meeting_context(query: str, user_id: str, top_k: int = 10) -> List[Dict[str, Any]]:
     """
     Core bridge between the RAG engine and the Agent UI.
     
@@ -28,6 +28,7 @@ def retrieve_meeting_context(query: str, top_k: int = 3) -> List[Dict[str, Any]]
 
     Args:
         query (str): The user's input question or statement.
+        user_id (str): The ID of the current user.
         top_k (int, optional): The number of top matching chunks to return. Defaults to 3.
 
     Returns:
@@ -52,7 +53,8 @@ def retrieve_meeting_context(query: str, top_k: int = 3) -> List[Dict[str, Any]]
         # which is highly effective for determining semantic equivalence regardless of text length.
         results = collection.query(
             query_embeddings=query_embedding,
-            n_results=top_k
+            n_results=top_k,
+            where={"user_id": user_id}
         )
         
         # 3. Format the Results

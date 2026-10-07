@@ -6,5 +6,6 @@ nest_asyncio.apply = lambda *args, **kwargs: None
 from chainlit.cli import cli
 
 if __name__ == "__main__":
-    sys.argv = ["chainlit", "run", "app.py"]
+    # Forward the command to chainlit, defaulting to "run app.py -w"
+    sys.argv = ["chainlit", "run", "app.py", "-w"]
     cli()
