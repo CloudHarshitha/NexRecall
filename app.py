@@ -69,7 +69,7 @@ async def on_chat_start():
         # Chainlit's data layer manages thread title, but we can set it up here.
     
     welcome_message = (
-        "Welcome to the **Omni-Meeting Memory Agent**! 🚀\n\n"
+        "Welcome to **NexRecall**! 🚀\n\n"
         "I can help you recall meeting history or extract action items from our past discussions.\n\n"
         "---\n\n"
         "**📤 Upload a Meeting**\n"

@@ -1,0 +1,209 @@
+:root {
+  --bg: #ffffff;
+  --sidebar: #f9f9f9;
+  --bubble: #f4f4f4;
+  --border: #e5e5e5;
+  --text: #0d0d0d;
+  --text-secondary: #5d5d5d;
+  --button-bg: #0d0d0d;
+  --button-text: #ffffff;
+
+  --accent: #8fbc8b;
+  --accent-hover: #7dae79;
+  --accent-text: #5f8f5b;
+  --accent-tint: #e9f3e8;
+  --on-accent: #0d0d0d;
+
+  --radius: 8px;
+  --radius-card: 12px;
+  --radius-pill: 999px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root, [data-theme="dark"], .dark {
+    --bg: #212121;
+    --sidebar: #171717;
+    --bubble: #2f2f2f;
+    --border: #424242;
+    --text: #ececec;
+    --text-secondary: #b4b4b4;
+    --button-bg: #ffffff;
+    --button-text: #0d0d0d;
+
+    --accent-text: #8fbc8b;
+    --accent-tint: #2a3a2a;
+  }
+}
+
+[data-theme="dark"], .dark {
+  --bg: #212121;
+  --sidebar: #171717;
+  --bubble: #2f2f2f;
+  --border: #424242;
+  --text: #ececec;
+  --text-secondary: #b4b4b4;
+  --button-bg: #ffffff;
+  --button-text: #0d0d0d;
+
+  --accent-text: #8fbc8b;
+  --accent-tint: #2a3a2a;
+}
+
+body, html, #root {
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif !important;
+  background-color: var(--bg) !important;
+  color: var(--text) !important;
+  font-size: 16px !important;
+  line-height: 1.6 !important;
+  font-weight: 400 !important;
+}
+
+/* Sidebar styling */
+.MuiDrawer-paper {
+  background-color: var(--sidebar) !important;
+  border-right: 1px solid var(--border) !important;
+  width: 260px !important;
+  box-shadow: none !important;
+  color: var(--text) !important;
+}
+
+/* Hide chainlit branding in sidebar if needed, we set logo via config */
+/* Sidebar list items */
+.MuiListItem-root, .sidebar-item {
+  border-radius: var(--radius) !important;
+  margin: 4px 8px !important;
+  width: calc(100% - 16px) !important;
+  color: var(--text) !important;
+  transition: background 150ms ease, color 150ms ease !important;
+  text-transform: none !important;
+}
+.MuiListItem-root:hover, .sidebar-item:hover {
+  background-color: var(--bubble) !important;
+}
+.MuiListItem-root.Mui-selected {
+  background-color: var(--bubble) !important;
+  font-weight: 500 !important;
+}
+
+/* Chat area constraints */
+/* Target the main message list container */
+.step, .message, .chat-message {
+  max-width: 720px !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+/* User Messages: Right aligned, soft bubble */
+[data-author="User"] > div, .message-user > div {
+  background-color: var(--bubble) !important;
+  border-radius: 18px !important;
+  max-width: 80% !important;
+  padding: 12px 16px !important;
+  margin-left: auto !important;
+  color: var(--text) !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+
+/* Assistant Messages: No bubble, plain text */
+[data-author="NexRecall"] > div, .message-assistant > div {
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  color: var(--text) !important;
+}
+
+/* Composer Styling */
+/* Chainlit input wrapper */
+.MuiInputBase-root {
+  background-color: var(--bubble) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-pill) !important;
+  color: var(--text) !important;
+  box-shadow: none !important;
+  transition: border 150ms ease, box-shadow 150ms ease !important;
+}
+.MuiInputBase-root:focus-within {
+  outline: none !important;
+  border-color: var(--accent) !important;
+}
+
+/* Buttons */
+.MuiButton-contained, .MuiButtonBase-root.MuiButton-containedPrimary, #send-button, .primary-button {
+  background-color: var(--button-bg) !important;
+  color: var(--button-text) !important;
+  border-radius: var(--radius-pill) !important; /* using pill for send circular, pill for others */
+  box-shadow: none !important;
+  text-transform: none !important;
+  font-weight: 500 !important;
+  min-height: 36px !important;
+  transition: opacity 150ms ease, background 150ms ease !important;
+}
+.MuiButton-contained:hover, #send-button:hover {
+  opacity: 0.85 !important;
+  background-color: var(--button-bg) !important;
+}
+.MuiButton-outlined {
+  background-color: transparent !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  color: var(--text) !important;
+  box-shadow: none !important;
+  transition: background 150ms ease !important;
+}
+.MuiButton-outlined:hover {
+  background-color: var(--bubble) !important;
+}
+
+/* Focus Rings for Accessibility */
+*:focus-visible {
+  outline: 2px solid var(--accent) !important;
+  outline-offset: 2px !important;
+}
+
+/* Typographic restrictions */
+h1, h2, h3, h4, h5, h6, strong, b {
+  font-weight: 500 !important;
+}
+
+/* Code and mono text */
+code, pre {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace !important;
+  border-radius: var(--radius) !important;
+}
+
+/* Cards */
+.MuiPaper-root.MuiCard-root {
+  border-radius: var(--radius-card) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: none !important;
+  background-color: var(--bg) !important;
+  transition: border 150ms ease !important;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: var(--radius-pill);
+}
+
+/* Thinking Indicator / Accent elements */
+.MuiCircularProgress-root, .thinking-dot {
+  color: var(--accent) !important;
+}
+
+/* Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

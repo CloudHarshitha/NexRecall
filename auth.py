@@ -264,38 +264,38 @@ AUTH_PAGE_HTML = r"""<!DOCTYPE html>
   <style>
     /* ─── Tokens ─────────────────────────────────────────────── */
     :root {
-      --color-bg:          #0f0f14;
-      --color-surface:     #17171f;
-      --color-surface-2:   #1e1e2a;
-      --color-border:      #2e2e3e;
-      --color-border-focus:#7c6af7;
+      --color-bg:          #ffffff;
+      --color-surface:     #ffffff;
+      --color-surface-2:   #f9f9f9;
+      --color-border:      #e5e5e5;
+      --color-border-focus:#8fbc8b;
 
-      --color-accent:      #7c6af7;
-      --color-accent-dark: #6457d4;
-      --color-accent-light:#a89df9;
+      --color-accent:      #8fbc8b;
+      --color-accent-dark: #7dae79;
+      --color-accent-light:#5f8f5b;
 
-      --color-text:        #e8e8f0;
-      --color-text-muted:  #8888a0;
-      --color-text-subtle: #5a5a72;
+      --color-text:        #0d0d0d;
+      --color-text-muted:  #5d5d5d;
+      --color-text-subtle: #5d5d5d;
 
       --color-error:       #f87171;
-      --color-error-bg:    #2a1616;
-      --color-error-border:#7f2d2d;
+      --color-error-bg:    #fff1f1;
+      --color-error-border:#f87171;
 
-      --color-success:     #34d399;
-      --color-success-bg:  #0d2a20;
+      --color-success:     #8fbc8b;
+      --color-success-bg:  #e9f3e8;
 
-      --color-warn-dim:    #a78bfa44;
+      --color-warn-dim:    #e9f3e8;
 
       /* Password strength */
       --color-pw-weak:     #f87171;
       --color-pw-okay:     #fbbf24;
-      --color-pw-strong:   #34d399;
+      --color-pw-strong:   #8fbc8b;
 
-      --radius-sm:  6px;
-      --radius-md:  10px;
-      --radius-lg:  16px;
-      --radius-full: 9999px;
+      --radius-sm:  8px;
+      --radius-md:  8px;
+      --radius-lg:  12px;
+      --radius-full: 999px;
 
       --space-xs:  4px;
       --space-sm:  8px;
@@ -304,16 +304,37 @@ AUTH_PAGE_HTML = r"""<!DOCTYPE html>
       --space-xl:  32px;
       --space-2xl: 48px;
 
-      --font-base: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-                   "Helvetica Neue", Arial, sans-serif;
+      --font-base: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       --font-size-sm:  13px;
       --font-size-md:  15px;
-      --font-size-lg:  18px;
+      --font-size-lg:  16px;
       --font-size-xl:  22px;
       --font-size-2xl: 28px;
 
-      --transition: 180ms ease;
-      --shadow-card: 0 8px 40px #00000066, 0 0 0 1px #ffffff08;
+      --transition: 150ms ease;
+      --shadow-card: none;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --color-bg:          #212121;
+        --color-surface:     #212121;
+        --color-surface-2:   #171717;
+        --color-border:      #424242;
+        --color-border-focus:#8fbc8b;
+
+        --color-accent:      #8fbc8b;
+        --color-accent-dark: #7dae79;
+        --color-accent-light:#8fbc8b;
+
+        --color-text:        #ececec;
+        --color-text-muted:  #b4b4b4;
+        --color-text-subtle: #b4b4b4;
+        
+        --color-error-bg:    #2a1616;
+        --color-error-border:#7f2d2d;
+        --color-success-bg:  #2a3a2a;
+      }
     }
 
     /* ─── Reset / base ───────────────────────────────────────── */
@@ -622,7 +643,7 @@ AUTH_PAGE_HTML = r"""<!DOCTYPE html>
       cursor: pointer;
       transition: background var(--transition), opacity var(--transition),
                   transform 80ms ease;
-      min-height: 44px;
+      min-height: 40px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -636,7 +657,7 @@ AUTH_PAGE_HTML = r"""<!DOCTYPE html>
       cursor: not-allowed;
     }
     .btn-primary:focus-visible {
-      outline: 2px solid var(--color-accent-light);
+      outline: 2px solid var(--color-border-focus);
       outline-offset: 3px;
     }
     /* Spinner inside button */
@@ -712,14 +733,9 @@ AUTH_PAGE_HTML = r"""<!DOCTYPE html>
     <!-- Brand -->
     <div class="brand" aria-hidden="true">
       <div class="brand-icon">
-        <!-- Simple memory/recall icon -->
-        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"
-             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="10"/>
-          <path d="M12 6v6l4 2"/>
-        </svg>
+        <img src="/public/logo.svg" alt="NexRecall Logo" width="36" height="36" />
       </div>
-      <span class="brand-name">NexRecall</span>
+      <span class="brand-name"><span style="color:var(--color-text);font-weight:500;">Nex</span><span style="color:var(--color-accent-light);font-weight:500;">Recall</span></span>
     </div>
 
     <!-- Tab navigation -->
