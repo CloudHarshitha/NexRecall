@@ -1,7 +1,7 @@
 import os
 from typing import List, Dict, Any
 import chromadb
-from langchain_openai import OpenAIEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 # Global cache for lazy loading
 _embedding_model = None
@@ -11,11 +11,11 @@ def get_retriever_components():
     global _embedding_model, _collection
     if _embedding_model is None:
         api_key = os.environ.get("NEXUS_API_KEY", "default-key")
-        base_url = os.environ.get("NEXUS_API_BASE_URL", "https://nexusapi.navigatelabs.ai")
-        _embedding_model = OpenAIEmbeddings(
-            model="text-embedding-ada-002",
-            api_key=api_key,
-            base_url=base_url
+        # Google's native embedding API — the OpenAI-compatible endpoint does
+        # not support embeddings (returns 501), so we use the native SDK.
+        _embedding_model = GoogleGenerativeAIEmbeddings(
+            model="models/gemini-embedding-001",
+            google_api_key=api_key,
         )
     if _collection is None:
         try:

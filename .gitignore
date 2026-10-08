@@ -6,3 +6,4 @@ chroma_db/
 *.db
 uploads/
 avatars/
+.files/

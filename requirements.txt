@@ -5,3 +5,7 @@ chainlit
 python-dotenv
 langchain-text-splitters
 langchain-openai
+langchain-google-genai
+bcrypt>=4.0.0
+aiosqlite
+sqlalchemy[asyncio]
