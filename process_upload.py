@@ -15,39 +15,52 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from sentence_transformers import SentenceTransformer
 import chromadb
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.messages import HumanMessage
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# ==============================================================================
-# Shared Initialization
-# ==============================================================================
-# These are initialized once at import-time and reused across all upload operations.
+# Global caches for lazy loading
+_embedding_model = None
+_chroma_collection = None
+_llm = None
+_text_splitter = None
 
-print("Initializing upload processing pipeline...")
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-chroma_client = chromadb.PersistentClient(path="./chroma_db")
-collection = chroma_client.get_or_create_collection(name="meeting_memory")
+def get_pipeline_components():
+    global _embedding_model, _chroma_collection, _llm, _text_splitter
+    
+    api_key = os.environ.get("NEXUS_API_KEY", "default-key")
+    base_url = os.environ.get("NEXUS_API_BASE_URL", "https://nexusapi.navigatelabs.ai")
+    
+    if _embedding_model is None:
+        _embedding_model = OpenAIEmbeddings(
+            model="text-embedding-ada-002",
+            api_key=api_key,
+            base_url=base_url
+        )
+        
+    if _llm is None:
+        llm_primary = ChatOpenAI(model="gemini-3.5-flash", api_key=api_key, base_url=base_url, max_retries=3)
+        llm_fallback_1 = ChatOpenAI(model="gemini-3.6-flash", api_key=api_key, base_url=base_url, max_retries=3)
+        llm_fallback_2 = ChatOpenAI(model="gemini-3.8-flash", api_key=api_key, base_url=base_url, max_retries=3)
+        _llm = llm_primary.with_fallbacks([llm_fallback_1, llm_fallback_2])
+        
+    if _chroma_collection is None:
+        client = chromadb.PersistentClient(path="./chroma_db")
+        _chroma_collection = client.get_or_create_collection(name="meeting_memory")
+        
+    if _text_splitter is None:
+        _text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=500,
+            chunk_overlap=50,
+            length_function=len,
+            is_separator_regex=False,
+        )
+        
+    return _embedding_model, _chroma_collection, _llm, _text_splitter
 
-_api_key = os.environ.get("NEXUS_API_KEY", "default-key")
-_base_url = os.environ.get("NEXUS_API_BASE_URL", "https://nexusapi.navigatelabs.ai")
-
-_llm_primary = ChatOpenAI(model="gemini-3.5-flash", api_key=_api_key, base_url=_base_url, max_retries=3)
-_llm_fallback_1 = ChatOpenAI(model="gemini-3.6-flash", api_key=_api_key, base_url=_base_url, max_retries=3)
-_llm_fallback_2 = ChatOpenAI(model="gemini-3.8-flash", api_key=_api_key, base_url=_base_url, max_retries=3)
-
-llm = _llm_primary.with_fallbacks([_llm_fallback_1, _llm_fallback_2])
-
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=500,
-    chunk_overlap=50,
-    length_function=len,
-    is_separator_regex=False,
-)
 
 
 # ==============================================================================
@@ -105,62 +118,45 @@ def parse_vtt(content: str) -> str:
 
 def transcribe_video(video_path: str, progress_callback=None) -> Optional[str]:
     """
-    Extract audio from a video file and transcribe it using Whisper.
-    
-    Uses moviepy for audio extraction and HuggingFace transformers 
-    Whisper pipeline for speech-to-text conversion.
-    
-    Args:
-        video_path: Path to the video file
-        progress_callback: Optional async callback for progress updates
-        
-    Returns:
-        Transcribed text, or None if transcription fails
+    Extract audio from a video file and transcribe it using OpenAI Whisper API.
+    Replaces the heavy local Whisper model to save memory.
     """
     audio_path = None
     try:
-        # Step 1: Extract audio from video using moviepy
         from moviepy import VideoFileClip
+        import openai
         
-        audio_path = os.path.join(tempfile.gettempdir(), "nexrecall_audio.wav")
+        audio_path = os.path.join(tempfile.gettempdir(), "nexrecall_audio.mp3")
         
+        # Step 1: Extract audio as a compressed format (mp3) to save bandwidth
         video = VideoFileClip(video_path)
         video.audio.write_audiofile(
             audio_path,
-            fps=16000,       # 16kHz sample rate (optimal for Whisper)
-            nbytes=2,        # 16-bit audio
-            codec='pcm_s16le',
-            logger=None      # Suppress moviepy's progress bar
+            logger=None
         )
         video.close()
         
-        # Step 2: Transcribe using Whisper via transformers
-        import torch
-        from transformers import pipeline
+        # Step 2: Transcribe using the API instead of a local PyTorch model
+        api_key = os.environ.get("NEXUS_API_KEY", "default-key")
+        base_url = os.environ.get("NEXUS_API_BASE_URL", "https://nexusapi.navigatelabs.ai")
+        client = openai.OpenAI(api_key=api_key, base_url=base_url)
         
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        with open(audio_path, "rb") as audio_file:
+            transcript = client.audio.transcriptions.create(
+                model="whisper-1", 
+                file=audio_file
+            )
         
-        transcriber = pipeline(
-            "automatic-speech-recognition",
-            model="openai/whisper-small",
-            device=device,
-            chunk_length_s=30,        # Process 30-second chunks
-            batch_size=8,
-        )
-        
-        result = transcriber(audio_path, return_timestamps=False)
-        
-        return result["text"]
+        return transcript.text
         
     except ImportError as e:
         print(f"Missing dependency for video transcription: {e}")
-        print("Install with: pip install moviepy")
+        print("Install with: pip install moviepy openai")
         return None
     except Exception as e:
         print(f"Video transcription error: {e}")
         return None
     finally:
-        # Clean up temporary audio file
         if audio_path and os.path.exists(audio_path):
             try:
                 os.remove(audio_path)
@@ -188,14 +184,17 @@ def process_transcript(text: str, meeting_name: str, user_id: str) -> str:
     Returns:
         The generated Minutes of Meeting as a formatted string
     """
+    # Lazy load components
+    embed_model, col, llm_model, splitter = get_pipeline_components()
+    
     # Chunk the text
-    chunks = text_splitter.split_text(text)
+    chunks = splitter.split_text(text)
     
     if not chunks:
         return "⚠️ No meaningful content found in the transcript."
     
     # Generate embeddings
-    embeddings = embedding_model.encode(chunks).tolist()
+    embeddings = embed_model.embed_documents(chunks)
     
     # Create unique IDs and metadata for each chunk (deterministic to avoid duplicates on re-upload)
     today = datetime.now().strftime("%Y-%m-%d")
@@ -211,7 +210,7 @@ def process_transcript(text: str, meeting_name: str, user_id: str) -> str:
     ]
     
     # Store in ChromaDB (upsert to handle re-uploads gracefully)
-    collection.upsert(
+    col.upsert(
         documents=chunks,
         embeddings=embeddings,
         metadatas=metadatas,
@@ -280,7 +279,8 @@ def generate_mom(transcript: str, meeting_name: str) -> str:
 
 Be thorough but concise. Extract all actionable information."""
     
-    response = llm.invoke([HumanMessage(content=prompt)])
+    _, _, llm_model, _ = get_pipeline_components()
+    response = llm_model.invoke([HumanMessage(content=prompt)])
     return response.content + truncation_note
 
 
