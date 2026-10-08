@@ -90,6 +90,67 @@ async def auth_page(request: Request):
     return HTMLResponse(AUTH_PAGE_HTML)
 
 
+@auth_router.post("/api/auth/login")
+async def login_api(request: Request):
+    """
+    Custom login endpoint that bypasses Chainlit's /login route (which has
+    an anyio/threadpool incompatibility with nest_asyncio).
+
+    Accepts JSON: { email, password }
+    On success: sets the Chainlit auth cookie and returns { success: true }.
+    On failure: returns { success: false, error: "..." }.
+    """
+    from chainlit.server import create_jwt, set_auth_cookie
+    from fastapi.responses import Response as FastAPIResponse
+
+    ip = request.client.host if request.client else "unknown"
+
+    # Rate-limit check
+    if not _check_rate_limit(ip):
+        return JSONResponse(
+            {"success": False, "error": "Too many failed attempts. Try again in 15 minutes."},
+            status_code=429,
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"success": False, "error": "Invalid request body."}, status_code=400)
+
+    email    = sanitize_str(body.get("email", "")).lower()
+    password = body.get("password", "")
+
+    if not email or not password:
+        return JSONResponse({"success": False, "error": "Email and password are required."}, status_code=422)
+
+    # Verify credentials
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(AppUser).where(AppUser.email == email))
+        user = result.scalar_one_or_none()
+
+    if not user or not verify_password(password, user.password_hash):
+        _record_failure(ip)
+        return JSONResponse(
+            {"success": False, "error": "Email or password is incorrect."},
+            status_code=401,
+        )
+
+    _clear_attempts(ip)
+
+    # Build a Chainlit User and mint the JWT
+    import chainlit as cl
+    cl_user = cl.User(
+        identifier=email,
+        metadata={"id": user.id, "name": user.name},
+    )
+    access_token = create_jwt(cl_user)
+
+    # Return success with the cookie set
+    response = JSONResponse({"success": True})
+    set_auth_cookie(request, response, access_token)
+    return response
+
+
 @auth_router.post("/api/auth/register")
 async def register(request: Request):
     """
@@ -141,9 +202,49 @@ async def register(request: Request):
     return JSONResponse({"success": True, "redirect": "/auth?tab=login&registered=1"})
 
 
-# Register the router on the Chainlit FastAPI app so our routes are served
-# alongside Chainlit's own routes.
-chainlit_app.include_router(auth_router)
+# ---------------------------------------------------------------------------
+# Route registration – must happen BEFORE Chainlit's catch-all GET
+# /{full_path:path} route, otherwise that catch-all swallows /auth and
+# returns the SPA shell instead of our HTML.
+#
+# Strategy: build the APIRoute objects from auth_router and splice them
+# into Chainlit's included router just before the catch-all entry.
+# ---------------------------------------------------------------------------
+from fastapi.routing import APIRoute as _APIRoute
+
+def _register_before_catchall() -> None:
+    """Insert auth_router routes into Chainlit's router before the catch-all."""
+    from chainlit.server import app as _cl_app
+    # The last entry in app.routes is the _IncludedRouter that holds all
+    # Chainlit routes (including the /{full_path:path} catch-all).
+    included = _cl_app.routes[-1]
+    cl_router = included.original_router
+
+    # Collect routes from our auth_router (already have APIRoute objects
+    # created by FastAPI when we used @auth_router.get / @auth_router.post).
+    our_routes = [r for r in auth_router.routes if isinstance(r, _APIRoute)]
+
+    # Find catch-all index
+    catchall_idx = next(
+        (i for i, r in enumerate(cl_router.routes)
+         if isinstance(r, _APIRoute) and getattr(r, "path", "") == "/{full_path:path}"),
+        len(cl_router.routes),  # fallback: append at end
+    )
+
+    # Splice our routes in before the catch-all
+    for offset, route in enumerate(our_routes):
+        cl_router.routes.insert(catchall_idx + offset, route)
+
+    # Invalidate FastAPI's route-matching cache so the new routes are visible
+    for attr in ("_effective_candidates", "_effective_low_priority_routes"):
+        cache = getattr(included, attr, None)
+        if cache is not None:
+            try:
+                cache.cache_clear()
+            except AttributeError:
+                pass  # not a lru_cache; ignore
+
+_register_before_catchall()
 
 
 # ---------------------------------------------------------------------------
@@ -1295,32 +1396,23 @@ AUTH_PAGE_HTML = r"""<!DOCTYPE html>
       loginBtn.classList.add('loading');
 
       try {
-        // POST to Chainlit's own /login endpoint using
-        // application/x-www-form-urlencoded (OAuth2PasswordRequestForm).
-        const body = new URLSearchParams();
-        body.append('username', email);
-        body.append('password', password);
-
-        const res = await fetch('/login', {
+        // POST to our own /api/auth/login endpoint (JSON).
+        // Chainlit's built-in /login has an anyio event-loop incompatibility
+        // when nest_asyncio is active, so we handle auth ourselves.
+        const res = await fetch('/api/auth/login', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: body.toString(),
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
           credentials: 'include',
-          redirect: 'follow',
         });
 
-        if (res.ok || res.redirected) {
-          // Chainlit sets the auth cookie; redirect to the chat app.
+        const data = await res.json().catch(() => ({}));
+
+        if (res.ok && data.success) {
+          // Cookie is set by the server; redirect to the chat app.
           window.location.href = '/';
         } else {
-          let detail = 'Email or password is incorrect.';
-          try {
-            const data = await res.json();
-            // Never expose which field was wrong — use generic message
-            if (data.detail === 'credentialssignin' || res.status === 401) {
-              detail = 'Email or password is incorrect.';
-            }
-          } catch (_) {}
+          const detail = data.error || 'Email or password is incorrect.';
           showBanner(loginBanner, loginBannerText, detail, 'error');
         }
       } catch (err) {

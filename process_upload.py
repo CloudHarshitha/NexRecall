@@ -16,7 +16,8 @@ from typing import Optional, List, Dict, Any
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import chromadb
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import ChatOpenAI
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_core.messages import HumanMessage
 from dotenv import load_dotenv
 
@@ -35,10 +36,12 @@ def get_pipeline_components():
     base_url = os.environ.get("NEXUS_API_BASE_URL", "https://nexusapi.navigatelabs.ai")
     
     if _embedding_model is None:
-        _embedding_model = OpenAIEmbeddings(
-            model="text-embedding-ada-002",
-            api_key=api_key,
-            base_url=base_url
+        api_key = os.environ.get("NEXUS_API_KEY", "default-key")
+        # Google's native embedding API — the OpenAI-compatible endpoint does
+        # not support embeddings (returns 501), so we use the native SDK.
+        _embedding_model = GoogleGenerativeAIEmbeddings(
+            model="models/gemini-embedding-001",
+            google_api_key=api_key,
         )
         
     if _llm is None:
