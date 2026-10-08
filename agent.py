@@ -8,15 +8,19 @@ from langgraph.graph import StateGraph, END
 
 from retriever import retrieve_meeting_context
 
-# Configure the standard openai Python client via langchain_openai to point to Nexus AI
-_api_key = os.environ.get("NEXUS_API_KEY", "default-key")
-_base_url = os.environ.get("NEXUS_API_BASE_URL", "https://nexusapi.navigatelabs.ai")
+_llm = None
 
-_llm_primary = ChatOpenAI(model="gemini-3.5-flash", api_key=_api_key, base_url=_base_url, max_retries=3)
-_llm_fallback_1 = ChatOpenAI(model="gemini-3.6-flash", api_key=_api_key, base_url=_base_url, max_retries=3)
-_llm_fallback_2 = ChatOpenAI(model="gemini-3.8-flash", api_key=_api_key, base_url=_base_url, max_retries=3)
+def get_llm():
+    global _llm
+    if _llm is None:
+        api_key = os.environ.get("NEXUS_API_KEY", "default-key")
+        base_url = os.environ.get("NEXUS_API_BASE_URL", "https://nexusapi.navigatelabs.ai")
+        _llm_primary = ChatOpenAI(model="gemini-3.5-flash", api_key=api_key, base_url=base_url, max_retries=3)
+        _llm_fallback_1 = ChatOpenAI(model="gemini-3.6-flash", api_key=api_key, base_url=base_url, max_retries=3)
+        _llm_fallback_2 = ChatOpenAI(model="gemini-3.8-flash", api_key=api_key, base_url=base_url, max_retries=3)
+        _llm = _llm_primary.with_fallbacks([_llm_fallback_1, _llm_fallback_2])
+    return _llm
 
-llm = _llm_primary.with_fallbacks([_llm_fallback_1, _llm_fallback_2])
 
 class AgentState(TypedDict):
     """
@@ -48,7 +52,7 @@ def router_node(state: AgentState):
     )
     
     # Classify the intent
-    response = llm.invoke([HumanMessage(content=prompt)])
+    response = get_llm().invoke([HumanMessage(content=prompt)])
     intent_classification = response.content.strip()
     
     # Normalize intent string to handle small variations from the LLM
@@ -89,7 +93,7 @@ def extractor_node(state: AgentState):
         f"User Query: {user_query}"
     )
     
-    response = llm.invoke([HumanMessage(content=prompt)])
+    response = get_llm().invoke([HumanMessage(content=prompt)])
     return {"final_response": response.content}
 
 def synthesizer_node(state: AgentState):
@@ -110,7 +114,7 @@ def synthesizer_node(state: AgentState):
         f"User Query: {user_query}"
     )
     
-    response = llm.invoke([HumanMessage(content=prompt)])
+    response = get_llm().invoke([HumanMessage(content=prompt)])
     return {"final_response": response.content}
 
 # Construct the LangGraph state machine

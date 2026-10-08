@@ -1,5 +1,4 @@
 openai
-sentence-transformers
 chromadb
 langgraph
 chainlit

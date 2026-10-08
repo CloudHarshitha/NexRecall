@@ -8,6 +8,9 @@ Supports:
 - Auth and persistent chat history
 """
 
+import nest_asyncio
+nest_asyncio.apply()
+
 import chainlit as cl
 from dotenv import load_dotenv
 load_dotenv()
