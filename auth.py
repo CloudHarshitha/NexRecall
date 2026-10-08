@@ -1,149 +1,1437 @@
-import uuid
-from fastapi import Request
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.routing import APIRouter
-from chainlit.server import app as chainlit_app
-from database import AsyncSessionLocal, AppUser, get_password_hash
-from sqlalchemy.future import select
+"""
+auth.py - Custom authentication routes for NexRecall.
 
-auth_router = APIRouter()
+Adds two endpoints to the Chainlit FastAPI app:
+  GET  /auth          → serves the combined login/sign-up HTML page
+  POST /api/auth/register → creates a new user, then delegates to
+                            Chainlit's own POST /login so we get the
+                            same JWT cookie without duplicating logic.
 
-SIGNUP_HTML = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Sign Up - NexRecall</title>
-    <style>
-        body {
-            background-color: #121212;
-            color: #ffffff;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-        }
-        .container {
-            background-color: #1e1e1e;
-            padding: 40px;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-            width: 100%;
-            max-width: 400px;
-        }
-        h2 {
-            text-align: center;
-            margin-bottom: 24px;
-        }
-        form {
-            display: flex;
-            flex-direction: column;
-        }
-        input {
-            background-color: #2c2c2c;
-            border: 1px solid #3c3c3c;
-            color: white;
-            padding: 12px;
-            margin-bottom: 16px;
-            border-radius: 8px;
-            font-size: 16px;
-            outline: none;
-        }
-        input:focus {
-            border-color: #d81b60;
-        }
-        button {
-            background-color: #d81b60;
-            color: white;
-            border: none;
-            padding: 14px;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: background-color 0.2s;
-        }
-        button:hover {
-            background-color: #ad144b;
-        }
-        .error {
-            color: #ff5252;
-            margin-bottom: 16px;
-            text-align: center;
-        }
-        .link {
-            text-align: center;
-            margin-top: 16px;
-        }
-        .link a {
-            color: #d81b60;
-            text-decoration: none;
-        }
-        .link a:hover {
-            text-decoration: underline;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h2>Create Account</h2>
-        {error_html}
-        <form action="/signup" method="post">
-            <input type="text" name="name" placeholder="Full Name" required>
-            <input type="email" name="email" placeholder="Email Address" required>
-            <input type="password" name="password" placeholder="Password (min 8 chars)" required minlength="8">
-            <input type="password" name="confirm_password" placeholder="Confirm Password" required minlength="8">
-            <button type="submit">Sign Up</button>
-        </form>
-        <div class="link">
-            Already have an account? <a href="/login">Sign in</a>
-        </div>
-    </div>
-</body>
-</html>
+The login form POSTs directly to Chainlit's own POST /login endpoint
+(OAuth2PasswordRequestForm: username + password fields), which calls
+our @cl.password_auth_callback defined in app.py.
 """
 
-@auth_router.get("/signup", response_class=HTMLResponse)
-async def signup_get(request: Request):
-    return SIGNUP_HTML.format(error_html="")
+import re
+import uuid
+import time
+import logging
+from collections import defaultdict
 
-@auth_router.post("/signup", response_class=HTMLResponse)
-async def signup_post(request: Request):
-    form = await request.form()
-    name = form.get("name")
-    email = form.get("email")
-    password = form.get("password")
-    confirm_password = form.get("confirm_password")
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from chainlit.server import app as chainlit_app
+from database import AsyncSessionLocal, AppUser, get_password_hash, verify_password
+from sqlalchemy.future import select
 
-    error = None
-    if not name or not email or not password or not confirm_password:
-        error = "All fields are required."
-    elif len(password) < 8:
-        error = "Password must be at least 8 characters."
-    elif password != confirm_password:
-        error = "Passwords do not match."
+logger = logging.getLogger(__name__)
 
-    if error:
-        return SIGNUP_HTML.format(error_html=f'<div class="error">{error}</div>')
+# ---------------------------------------------------------------------------
+# Simple in-memory rate limiter (resets on process restart — acceptable for
+# Render free-tier single-instance deployments).
+# Tracks failed login attempts per IP.  After MAX_ATTEMPTS within WINDOW_SECS
+# the IP is locked out for LOCKOUT_SECS.
+# ---------------------------------------------------------------------------
+MAX_ATTEMPTS = 5          # failed attempts before lockout
+WINDOW_SECS = 300         # sliding window (5 minutes)
+LOCKOUT_SECS = 900        # lockout duration (15 minutes)
 
+_attempts: dict[str, list[float]] = defaultdict(list)
+
+def _check_rate_limit(ip: str) -> bool:
+    """Return True if the IP is allowed, False if locked out."""
+    now = time.monotonic()
+    # Prune timestamps outside the window
+    _attempts[ip] = [t for t in _attempts[ip] if now - t < WINDOW_SECS]
+    return len(_attempts[ip]) < MAX_ATTEMPTS
+
+def _record_failure(ip: str) -> None:
+    _attempts[ip].append(time.monotonic())
+
+def _clear_attempts(ip: str) -> None:
+    _attempts.pop(ip, None)
+
+# ---------------------------------------------------------------------------
+# Password policy (mirrors the front-end checklist)
+# ---------------------------------------------------------------------------
+PW_MIN = 8
+PW_MAX = 64
+_RE_UPPER  = re.compile(r"[A-Z]")
+_RE_LOWER  = re.compile(r"[a-z]")
+_RE_DIGIT  = re.compile(r"\d")
+
+def validate_password(pw: str) -> str | None:
+    """Return an error message or None if the password is valid."""
+    if len(pw) < PW_MIN:
+        return f"Password must be at least {PW_MIN} characters."
+    if len(pw) > PW_MAX:
+        return f"Password must be at most {PW_MAX} characters."
+    if not _RE_UPPER.search(pw):
+        return "Password must contain at least one uppercase letter."
+    if not _RE_LOWER.search(pw):
+        return "Password must contain at least one lowercase letter."
+    if not _RE_DIGIT.search(pw):
+        return "Password must contain at least one number."
+    return None
+
+def sanitize_str(value: str, max_len: int = 256) -> str:
+    """Strip whitespace and truncate to prevent oversized inputs."""
+    return value.strip()[:max_len]
+
+# ---------------------------------------------------------------------------
+# Auth router
+# ---------------------------------------------------------------------------
+auth_router = APIRouter()
+
+
+@auth_router.get("/auth", response_class=HTMLResponse)
+async def auth_page(request: Request):
+    """Serve the combined login / sign-up page."""
+    return HTMLResponse(AUTH_PAGE_HTML)
+
+
+@auth_router.post("/api/auth/register")
+async def register(request: Request):
+    """
+    Create a new user account.
+
+    Accepts JSON: { name, email, password, confirm_password }
+    Returns JSON: { success, error?, redirect? }
+    """
+    # --- Parse body ---
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"success": False, "error": "Invalid request body."}, status_code=400)
+
+    name             = sanitize_str(body.get("name", ""))
+    email            = sanitize_str(body.get("email", "")).lower()
+    password         = body.get("password", "")
+    confirm_password = body.get("confirm_password", "")
+
+    # --- Server-side validation ---
+    if not name:
+        return JSONResponse({"success": False, "error": "Please enter your full name."}, status_code=422)
+    if not email or "@" not in email or "." not in email.split("@")[-1]:
+        return JSONResponse({"success": False, "error": "That email looks incomplete. Try name@example.com"}, status_code=422)
+    pw_error = validate_password(password)
+    if pw_error:
+        return JSONResponse({"success": False, "error": pw_error}, status_code=422)
+    if password != confirm_password:
+        return JSONResponse({"success": False, "error": "Passwords don't match."}, status_code=422)
+
+    # --- Persist user ---
     async with AsyncSessionLocal() as session:
-        stmt = select(AppUser).where(AppUser.email == email)
-        result = await session.execute(stmt)
+        result = await session.execute(select(AppUser).where(AppUser.email == email))
         if result.scalar_one_or_none():
-            error = "Email already registered."
-            return SIGNUP_HTML.format(error_html=f'<div class="error">{error}</div>')
-
+            return JSONResponse(
+                {"success": False, "error": "That email is already registered. Try logging in."},
+                status_code=409,
+            )
         new_user = AppUser(
             id=str(uuid.uuid4()),
             name=name,
             email=email,
-            password_hash=get_password_hash(password)
+            password_hash=get_password_hash(password),
         )
         session.add(new_user)
         await session.commit()
 
-    return RedirectResponse(url="/login", status_code=303)
+    logger.info("New user registered: %s", email)
+    return JSONResponse({"success": True, "redirect": "/auth?tab=login&registered=1"})
 
+
+# Register the router on the Chainlit FastAPI app so our routes are served
+# alongside Chainlit's own routes.
 chainlit_app.include_router(auth_router)
+
+
+# ---------------------------------------------------------------------------
+# Combined login / sign-up HTML page
+# ---------------------------------------------------------------------------
+AUTH_PAGE_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Sign in or create your NexRecall account." />
+  <title>NexRecall – Sign in</title>
+
+  <!-- ============================================================
+       CSS VARIABLES – retheme by editing this block only
+       ============================================================ -->
+  <style>
+    /* ─── Tokens ─────────────────────────────────────────────── */
+    :root {
+      --color-bg:          #0f0f14;
+      --color-surface:     #17171f;
+      --color-surface-2:   #1e1e2a;
+      --color-border:      #2e2e3e;
+      --color-border-focus:#7c6af7;
+
+      --color-accent:      #7c6af7;
+      --color-accent-dark: #6457d4;
+      --color-accent-light:#a89df9;
+
+      --color-text:        #e8e8f0;
+      --color-text-muted:  #8888a0;
+      --color-text-subtle: #5a5a72;
+
+      --color-error:       #f87171;
+      --color-error-bg:    #2a1616;
+      --color-error-border:#7f2d2d;
+
+      --color-success:     #34d399;
+      --color-success-bg:  #0d2a20;
+
+      --color-warn-dim:    #a78bfa44;
+
+      /* Password strength */
+      --color-pw-weak:     #f87171;
+      --color-pw-okay:     #fbbf24;
+      --color-pw-strong:   #34d399;
+
+      --radius-sm:  6px;
+      --radius-md:  10px;
+      --radius-lg:  16px;
+      --radius-full: 9999px;
+
+      --space-xs:  4px;
+      --space-sm:  8px;
+      --space-md:  16px;
+      --space-lg:  24px;
+      --space-xl:  32px;
+      --space-2xl: 48px;
+
+      --font-base: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                   "Helvetica Neue", Arial, sans-serif;
+      --font-size-sm:  13px;
+      --font-size-md:  15px;
+      --font-size-lg:  18px;
+      --font-size-xl:  22px;
+      --font-size-2xl: 28px;
+
+      --transition: 180ms ease;
+      --shadow-card: 0 8px 40px #00000066, 0 0 0 1px #ffffff08;
+    }
+
+    /* ─── Reset / base ───────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--color-bg);
+      color: var(--color-text);
+      font-family: var(--font-base);
+      font-size: var(--font-size-md);
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: var(--space-md);
+    }
+
+    /* ─── Reduced-motion override ────────────────────────────── */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition: none !important; animation: none !important; }
+    }
+
+    /* ─── Card ───────────────────────────────────────────────── */
+    .card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-card);
+      width: 100%;
+      max-width: 440px;
+      padding: var(--space-xl) var(--space-xl) var(--space-lg);
+    }
+
+    /* ─── Brand mark ─────────────────────────────────────────── */
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+      margin-bottom: var(--space-xl);
+    }
+    .brand-icon {
+      width: 36px; height: 36px;
+      background: var(--color-accent);
+      border-radius: var(--radius-md);
+      display: grid; place-items: center;
+      flex-shrink: 0;
+    }
+    .brand-icon svg { width: 20px; height: 20px; }
+    .brand-name {
+      font-size: var(--font-size-xl);
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: var(--color-text);
+    }
+
+    /* ─── Tab strip ──────────────────────────────────────────── */
+    .tab-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      background: var(--color-surface-2);
+      border-radius: var(--radius-md);
+      padding: 3px;
+      margin-bottom: var(--space-lg);
+      border: 1px solid var(--color-border);
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      color: var(--color-text-muted);
+      font-size: var(--font-size-md);
+      font-weight: 500;
+      padding: 9px var(--space-md);
+      border-radius: calc(var(--radius-md) - 2px);
+      cursor: pointer;
+      transition: background var(--transition), color var(--transition);
+      min-height: 44px;
+    }
+    .tab-btn:hover:not([aria-selected="true"]) {
+      color: var(--color-text);
+    }
+    .tab-btn[aria-selected="true"] {
+      background: var(--color-accent);
+      color: #fff;
+    }
+    .tab-btn:focus-visible {
+      outline: 2px solid var(--color-border-focus);
+      outline-offset: 2px;
+    }
+
+    /* ─── Tab panels ─────────────────────────────────────────── */
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ─── Headings / subtext ─────────────────────────────────── */
+    .form-heading {
+      font-size: var(--font-size-2xl);
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      line-height: 1.2;
+      margin-bottom: var(--space-xs);
+    }
+    .form-subtext {
+      color: var(--color-text-muted);
+      font-size: var(--font-size-sm);
+      margin-bottom: var(--space-lg);
+      line-height: 1.5;
+    }
+
+    /* ─── Field group ────────────────────────────────────────── */
+    .field {
+      margin-bottom: var(--space-md);
+    }
+    .field label {
+      display: block;
+      font-size: var(--font-size-sm);
+      font-weight: 500;
+      color: var(--color-text-muted);
+      margin-bottom: var(--space-xs);
+    }
+    .field-row {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .field-row input {
+      width: 100%;
+      background: var(--color-surface-2);
+      border: 1.5px solid var(--color-border);
+      border-radius: var(--radius-md);
+      color: var(--color-text);
+      font-size: var(--font-size-md);
+      padding: 11px var(--space-md);
+      transition: border-color var(--transition), box-shadow var(--transition);
+      /* Allow password-with-button to not overlap text */
+    }
+    .field-row input[type="password"],
+    .field-row input.has-toggle {
+      padding-right: 44px;
+    }
+    .field-row input::placeholder { color: var(--color-text-subtle); }
+    .field-row input:focus {
+      outline: none;
+      border-color: var(--color-border-focus);
+      box-shadow: 0 0 0 3px #7c6af722;
+    }
+    .field-row input[aria-invalid="true"] {
+      border-color: var(--color-error);
+      box-shadow: 0 0 0 3px #f8717122;
+    }
+    .field-row input[aria-invalid="false"]:not(:placeholder-shown) {
+      border-color: var(--color-success);
+    }
+
+    /* Show / hide password toggle */
+    .toggle-pw {
+      position: absolute;
+      right: 0;
+      top: 0;
+      height: 100%;
+      width: 44px;
+      display: grid;
+      place-items: center;
+      background: none;
+      border: none;
+      color: var(--color-text-muted);
+      cursor: pointer;
+      border-radius: 0 var(--radius-md) var(--radius-md) 0;
+      transition: color var(--transition);
+      /* min touch target */
+      min-width: 44px;
+    }
+    .toggle-pw:hover { color: var(--color-text); }
+    .toggle-pw:focus-visible {
+      outline: 2px solid var(--color-border-focus);
+      outline-offset: -2px;
+    }
+    .toggle-pw svg { width: 18px; height: 18px; pointer-events: none; }
+
+    /* Error / hint text below field */
+    .field-error {
+      font-size: var(--font-size-sm);
+      color: var(--color-error);
+      margin-top: var(--space-xs);
+      display: none;
+      align-items: center;
+      gap: 4px;
+    }
+    .field-error.visible { display: flex; }
+    .field-error svg { width: 13px; height: 13px; flex-shrink: 0; }
+
+    /* ─── Password strength meter ────────────────────────────── */
+    .pw-strength {
+      margin-top: var(--space-sm);
+    }
+    .pw-strength-bar {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 4px;
+      margin-bottom: 6px;
+    }
+    .pw-bar-seg {
+      height: 4px;
+      border-radius: var(--radius-full);
+      background: var(--color-border);
+      transition: background 300ms ease;
+    }
+    .pw-bar-seg.lit-weak   { background: var(--color-pw-weak); }
+    .pw-bar-seg.lit-okay   { background: var(--color-pw-okay); }
+    .pw-bar-seg.lit-strong { background: var(--color-pw-strong); }
+
+    .pw-label {
+      font-size: var(--font-size-sm);
+      color: var(--color-text-muted);
+      margin-bottom: 6px;
+    }
+    .pw-label span { font-weight: 600; }
+    .pw-label .lbl-weak   { color: var(--color-pw-weak); }
+    .pw-label .lbl-okay   { color: var(--color-pw-okay); }
+    .pw-label .lbl-strong { color: var(--color-pw-strong); }
+
+    .pw-checklist {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .pw-checklist li {
+      font-size: var(--font-size-sm);
+      color: var(--color-text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: color var(--transition);
+    }
+    .pw-checklist li svg { width: 14px; height: 14px; flex-shrink: 0; }
+    .pw-checklist li.met {
+      color: var(--color-success);
+    }
+
+    /* ─── Checkbox rows ──────────────────────────────────────── */
+    .check-row {
+      display: flex;
+      align-items: flex-start;
+      gap: var(--space-sm);
+      margin-bottom: var(--space-md);
+    }
+    .check-row input[type="checkbox"] {
+      width: 18px; height: 18px;
+      flex-shrink: 0;
+      margin-top: 1px;
+      accent-color: var(--color-accent);
+      cursor: pointer;
+      /* Ensure 44px touch target by increasing clickable area via wrapper */
+    }
+    .check-row label {
+      font-size: var(--font-size-sm);
+      color: var(--color-text-muted);
+      cursor: pointer;
+      line-height: 1.5;
+    }
+    .check-row a {
+      color: var(--color-accent-light);
+      text-decoration: none;
+    }
+    .check-row a:hover { text-decoration: underline; }
+    .check-row a:focus-visible {
+      outline: 2px solid var(--color-border-focus);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
+
+    /* Remember me + forgot password row */
+    .remember-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: var(--space-md);
+    }
+    .remember-row .check-row { margin-bottom: 0; }
+    .forgot-link {
+      font-size: var(--font-size-sm);
+      color: var(--color-accent-light);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .forgot-link:hover { text-decoration: underline; }
+    .forgot-link:focus-visible {
+      outline: 2px solid var(--color-border-focus);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
+
+    /* ─── Submit button ──────────────────────────────────────── */
+    .btn-primary {
+      width: 100%;
+      background: var(--color-accent);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius-md);
+      font-size: var(--font-size-md);
+      font-weight: 600;
+      padding: 13px var(--space-lg);
+      cursor: pointer;
+      transition: background var(--transition), opacity var(--transition),
+                  transform 80ms ease;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-sm);
+      margin-top: var(--space-sm);
+    }
+    .btn-primary:hover:not(:disabled) { background: var(--color-accent-dark); }
+    .btn-primary:active:not(:disabled) { transform: scale(0.98); }
+    .btn-primary:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .btn-primary:focus-visible {
+      outline: 2px solid var(--color-accent-light);
+      outline-offset: 3px;
+    }
+    /* Spinner inside button */
+    .btn-spinner {
+      display: none;
+      width: 18px; height: 18px;
+      border: 2px solid #ffffff60;
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    .btn-primary.loading .btn-spinner { display: block; }
+    .btn-primary.loading .btn-label   { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Banner (server errors / success) ───────────────────── */
+    .banner {
+      border-radius: var(--radius-md);
+      padding: var(--space-sm) var(--space-md);
+      font-size: var(--font-size-sm);
+      display: none;
+      align-items: flex-start;
+      gap: var(--space-sm);
+      margin-bottom: var(--space-md);
+      line-height: 1.5;
+    }
+    .banner.visible { display: flex; }
+    .banner svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; }
+    .banner.error {
+      background: var(--color-error-bg);
+      border: 1px solid var(--color-error-border);
+      color: var(--color-error);
+    }
+    .banner.success {
+      background: var(--color-success-bg);
+      border: 1px solid #15543e;
+      color: var(--color-success);
+    }
+
+    /* ─── Footer switch ──────────────────────────────────────── */
+    .switch-link {
+      text-align: center;
+      font-size: var(--font-size-sm);
+      color: var(--color-text-muted);
+      margin-top: var(--space-lg);
+    }
+    .switch-link button {
+      background: none;
+      border: none;
+      color: var(--color-accent-light);
+      font-size: inherit;
+      cursor: pointer;
+      text-decoration: underline;
+      padding: 0;
+    }
+    .switch-link button:focus-visible {
+      outline: 2px solid var(--color-border-focus);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
+
+    /* ─── Divider ────────────────────────────────────────────── */
+    .divider {
+      border: none;
+      border-top: 1px solid var(--color-border);
+      margin: var(--space-lg) 0;
+    }
+  </style>
+</head>
+
+<body>
+  <main class="card" id="main-card">
+    <!-- Brand -->
+    <div class="brand" aria-hidden="true">
+      <div class="brand-icon">
+        <!-- Simple memory/recall icon -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 6v6l4 2"/>
+        </svg>
+      </div>
+      <span class="brand-name">NexRecall</span>
+    </div>
+
+    <!-- Tab navigation -->
+    <div class="tab-list" role="tablist" aria-label="Authentication">
+      <button
+        class="tab-btn"
+        id="tab-login"
+        role="tab"
+        aria-selected="true"
+        aria-controls="panel-login"
+        tabindex="0"
+      >Log in</button>
+      <button
+        class="tab-btn"
+        id="tab-signup"
+        role="tab"
+        aria-selected="false"
+        aria-controls="panel-signup"
+        tabindex="-1"
+      >Sign up</button>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════
+         LOGIN PANEL
+         ══════════════════════════════════════════════════════════ -->
+    <div
+      id="panel-login"
+      role="tabpanel"
+      aria-labelledby="tab-login"
+      class="tab-panel active"
+    >
+      <h1 class="form-heading">Welcome back.</h1>
+      <p class="form-subtext">Your meetings are right where you left them.</p>
+
+      <!-- Server error / success banner -->
+      <div
+        id="login-banner"
+        class="banner error"
+        role="alert"
+        aria-live="assertive"
+        aria-atomic="true"
+        tabindex="-1"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <span id="login-banner-text"></span>
+      </div>
+
+      <form id="login-form" novalidate autocomplete="on">
+        <!-- Email -->
+        <div class="field">
+          <label for="login-email">Email address</label>
+          <div class="field-row">
+            <input
+              id="login-email"
+              name="username"
+              type="email"
+              autocomplete="email"
+              inputmode="email"
+              placeholder="you@example.com"
+              required
+              aria-required="true"
+              aria-describedby="login-email-err"
+            />
+          </div>
+          <div id="login-email-err" class="field-error" role="alert">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                 stroke-linecap="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <span></span>
+          </div>
+        </div>
+
+        <!-- Password -->
+        <div class="field">
+          <label for="login-password">Password</label>
+          <div class="field-row">
+            <input
+              id="login-password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              placeholder="Your password"
+              required
+              aria-required="true"
+              aria-describedby="login-password-err"
+              class="has-toggle"
+            />
+            <button
+              type="button"
+              class="toggle-pw"
+              aria-pressed="false"
+              aria-label="Show password"
+              data-for="login-password"
+            >
+              <!-- Eye icon (show) -->
+              <svg class="icon-show" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              <!-- Eye-off icon (hide) — hidden by default -->
+              <svg class="icon-hide" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                   aria-hidden="true" style="display:none">
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8
+                         a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4
+                         c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07
+                         a3 3 0 1 1-4.24-4.24"/>
+                <line x1="1" y1="1" x2="23" y2="23"/>
+              </svg>
+            </button>
+          </div>
+          <div id="login-password-err" class="field-error" role="alert">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                 stroke-linecap="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <span></span>
+          </div>
+        </div>
+
+        <!-- Remember me + forgot -->
+        <div class="remember-row">
+          <div class="check-row">
+            <input type="checkbox" id="login-remember" name="remember" />
+            <label for="login-remember">Remember me</label>
+          </div>
+          <a href="#" class="forgot-link" id="forgot-link">Forgot password?</a>
+        </div>
+
+        <button type="submit" class="btn-primary" id="login-submit">
+          <div class="btn-spinner" aria-hidden="true"></div>
+          <span class="btn-label">Log in</span>
+        </button>
+      </form>
+
+      <div class="switch-link">
+        Don't have an account?
+        <button type="button" onclick="switchTab('signup')">Sign up free</button>
+      </div>
+    </div><!-- /panel-login -->
+
+    <!-- ══════════════════════════════════════════════════════════
+         SIGN-UP PANEL
+         ══════════════════════════════════════════════════════════ -->
+    <div
+      id="panel-signup"
+      role="tabpanel"
+      aria-labelledby="tab-signup"
+      class="tab-panel"
+    >
+      <h1 class="form-heading">Create your account.</h1>
+      <p class="form-subtext">It takes under a minute.</p>
+
+      <!-- Server error banner -->
+      <div
+        id="signup-banner"
+        class="banner error"
+        role="alert"
+        aria-live="assertive"
+        aria-atomic="true"
+        tabindex="-1"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <span id="signup-banner-text"></span>
+      </div>
+
+      <form id="signup-form" novalidate autocomplete="on">
+        <!-- Full name -->
+        <div class="field">
+          <label for="signup-name">Full name</label>
+          <div class="field-row">
+            <input
+              id="signup-name"
+              name="name"
+              type="text"
+              autocomplete="name"
+              placeholder="Alex Smith"
+              required
+              aria-required="true"
+              aria-describedby="signup-name-err"
+            />
+          </div>
+          <div id="signup-name-err" class="field-error" role="alert">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                 stroke-linecap="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <span></span>
+          </div>
+        </div>
+
+        <!-- Email -->
+        <div class="field">
+          <label for="signup-email">Email address</label>
+          <div class="field-row">
+            <input
+              id="signup-email"
+              name="email"
+              type="email"
+              autocomplete="email"
+              inputmode="email"
+              placeholder="you@example.com"
+              required
+              aria-required="true"
+              aria-describedby="signup-email-err"
+            />
+          </div>
+          <div id="signup-email-err" class="field-error" role="alert">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                 stroke-linecap="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <span></span>
+          </div>
+        </div>
+
+        <!-- Password -->
+        <div class="field">
+          <label for="signup-password">Password</label>
+          <div class="field-row">
+            <input
+              id="signup-password"
+              name="password"
+              type="password"
+              autocomplete="new-password"
+              placeholder="Create a password"
+              required
+              aria-required="true"
+              aria-describedby="signup-password-err signup-pw-strength"
+              class="has-toggle"
+            />
+            <button
+              type="button"
+              class="toggle-pw"
+              aria-pressed="false"
+              aria-label="Show password"
+              data-for="signup-password"
+            >
+              <svg class="icon-show" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              <svg class="icon-hide" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                   aria-hidden="true" style="display:none">
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8
+                         a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4
+                         c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07
+                         a3 3 0 1 1-4.24-4.24"/>
+                <line x1="1" y1="1" x2="23" y2="23"/>
+              </svg>
+            </button>
+          </div>
+          <div id="signup-password-err" class="field-error" role="alert">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                 stroke-linecap="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <span></span>
+          </div>
+          <!-- Strength meter -->
+          <div
+            id="signup-pw-strength"
+            class="pw-strength"
+            aria-live="polite"
+            aria-atomic="true"
+            style="display:none"
+          >
+            <div class="pw-strength-bar" aria-hidden="true">
+              <div class="pw-bar-seg" id="seg-1"></div>
+              <div class="pw-bar-seg" id="seg-2"></div>
+              <div class="pw-bar-seg" id="seg-3"></div>
+            </div>
+            <p class="pw-label">
+              Strength: <span id="pw-strength-label">–</span>
+            </p>
+            <ul class="pw-checklist" aria-label="Password requirements">
+              <li id="chk-len">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="9 12 11 14 15 10" class="check-mark" style="display:none"/>
+                  <line x1="8" y1="12" x2="16" y2="12" class="dash-mark"/>
+                </svg>
+                At least 8 characters
+              </li>
+              <li id="chk-upper">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="9 12 11 14 15 10" class="check-mark" style="display:none"/>
+                  <line x1="8" y1="12" x2="16" y2="12" class="dash-mark"/>
+                </svg>
+                One uppercase letter (A–Z)
+              </li>
+              <li id="chk-lower">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="9 12 11 14 15 10" class="check-mark" style="display:none"/>
+                  <line x1="8" y1="12" x2="16" y2="12" class="dash-mark"/>
+                </svg>
+                One lowercase letter (a–z)
+              </li>
+              <li id="chk-digit">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="9 12 11 14 15 10" class="check-mark" style="display:none"/>
+                  <line x1="8" y1="12" x2="16" y2="12" class="dash-mark"/>
+                </svg>
+                One number (0–9)
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Confirm password -->
+        <div class="field">
+          <label for="signup-confirm">Confirm password</label>
+          <div class="field-row">
+            <input
+              id="signup-confirm"
+              name="confirm_password"
+              type="password"
+              autocomplete="new-password"
+              placeholder="Repeat your password"
+              required
+              aria-required="true"
+              aria-describedby="signup-confirm-err"
+              class="has-toggle"
+            />
+            <button
+              type="button"
+              class="toggle-pw"
+              aria-pressed="false"
+              aria-label="Show password"
+              data-for="signup-confirm"
+            >
+              <svg class="icon-show" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              <svg class="icon-hide" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                   aria-hidden="true" style="display:none">
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8
+                         a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4
+                         c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07
+                         a3 3 0 1 1-4.24-4.24"/>
+                <line x1="1" y1="1" x2="23" y2="23"/>
+              </svg>
+            </button>
+          </div>
+          <div id="signup-confirm-err" class="field-error" role="alert">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                 stroke-linecap="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <span></span>
+          </div>
+        </div>
+
+        <!-- Terms checkbox -->
+        <div class="check-row">
+          <input
+            type="checkbox"
+            id="signup-terms"
+            name="terms"
+            required
+            aria-required="true"
+            aria-describedby="signup-terms-err"
+          />
+          <label for="signup-terms">
+            I agree to the
+            <a href="#" onclick="return false;">Terms</a> and
+            <a href="#" onclick="return false;">Privacy Policy</a>
+          </label>
+        </div>
+        <div id="signup-terms-err" class="field-error" role="alert" style="margin-top:-8px;margin-bottom:12px">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+               stroke-linecap="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
+            <line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          <span>Please accept the Terms and Privacy Policy to continue.</span>
+        </div>
+
+        <button type="submit" class="btn-primary" id="signup-submit">
+          <div class="btn-spinner" aria-hidden="true"></div>
+          <span class="btn-label">Create account</span>
+        </button>
+      </form>
+
+      <div class="switch-link">
+        Already have an account?
+        <button type="button" onclick="switchTab('login')">Log in</button>
+      </div>
+    </div><!-- /panel-signup -->
+  </main><!-- /card -->
+
+  <!-- ============================================================
+       JAVASCRIPT – tabs, validation, submission
+       ============================================================ -->
+  <script>
+  (function () {
+    'use strict';
+
+    // ── Helpers ──────────────────────────────────────────────────────
+    function qs(sel, ctx) { return (ctx || document).querySelector(sel); }
+    function setError(errEl, msg) {
+      const span = errEl.querySelector('span');
+      if (span) span.textContent = msg;
+      errEl.classList.add('visible');
+      // Mark the associated input as invalid
+      const inputId = errEl.id.replace('-err', '').replace('signup-', 'signup-').replace('login-', 'login-');
+      const input = document.getElementById(inputId);
+      if (input) { input.setAttribute('aria-invalid', 'true'); }
+    }
+    function clearError(errEl) {
+      errEl.classList.remove('visible');
+      const inputId = errEl.id.replace('-err', '').replace('signup-', 'signup-').replace('login-', 'login-');
+      const input = document.getElementById(inputId);
+      if (input) { input.setAttribute('aria-invalid', 'false'); }
+    }
+    function showBanner(bannerEl, textEl, msg, type) {
+      bannerEl.className = 'banner ' + type + ' visible';
+      textEl.textContent = msg;
+      bannerEl.focus();
+    }
+    function hideBanner(bannerEl) { bannerEl.classList.remove('visible'); }
+
+    // ── Tab switching ─────────────────────────────────────────────────
+    const tabs = { login: qs('#tab-login'), signup: qs('#tab-signup') };
+    const panels = { login: qs('#panel-login'), signup: qs('#panel-signup') };
+    // Preserve shared email across tabs
+    let sharedEmail = '';
+
+    window.switchTab = function (name) {
+      const other = name === 'login' ? 'signup' : 'login';
+      // Save current email
+      const fromEmail = qs('#' + other + '-email');
+      const toEmail   = qs('#' + name  + '-email');
+      if (fromEmail) sharedEmail = fromEmail.value;
+
+      // Update tabs
+      tabs[other].setAttribute('aria-selected', 'false');
+      tabs[other].setAttribute('tabindex', '-1');
+      tabs[name].setAttribute('aria-selected', 'true');
+      tabs[name].setAttribute('tabindex', '0');
+
+      // Update panels
+      panels[other].classList.remove('active');
+      panels[name].classList.add('active');
+
+      // Restore email
+      if (toEmail && sharedEmail) toEmail.value = sharedEmail;
+
+      // Focus heading
+      const heading = qs('.form-heading', panels[name]);
+      if (heading) { heading.setAttribute('tabindex', '-1'); heading.focus(); }
+
+      // Update URL without reload
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', name);
+      history.replaceState(null, '', url.toString());
+    };
+
+    // Keyboard arrow-key navigation for tabs
+    [tabs.login, tabs.signup].forEach(function (btn, i, arr) {
+      btn.addEventListener('keydown', function (e) {
+        let next = null;
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { next = arr[(i + 1) % arr.length]; }
+        if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   { next = arr[(i - 1 + arr.length) % arr.length]; }
+        if (next) { e.preventDefault(); next.click(); next.focus(); }
+      });
+      btn.addEventListener('click', function () {
+        switchTab(btn.getAttribute('aria-controls').replace('panel-', ''));
+      });
+    });
+
+    // ── Show/hide password toggles ────────────────────────────────────
+    document.querySelectorAll('.toggle-pw').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const input = document.getElementById(btn.dataset.for);
+        if (!input) return;
+        const isVisible = input.type === 'text';
+        input.type = isVisible ? 'password' : 'text';
+        btn.setAttribute('aria-pressed', String(!isVisible));
+        btn.setAttribute('aria-label', isVisible ? 'Show password' : 'Hide password');
+        btn.querySelector('.icon-show').style.display = isVisible ? '' : 'none';
+        btn.querySelector('.icon-hide').style.display = isVisible ? 'none' : '';
+      });
+    });
+
+    // ── Password strength ─────────────────────────────────────────────
+    const pwInput   = qs('#signup-password');
+    const strengthEl = qs('#signup-pw-strength');
+    const strengthLabel = qs('#pw-strength-label');
+    const segs = [qs('#seg-1'), qs('#seg-2'), qs('#seg-3')];
+    const chks = {
+      len:   qs('#chk-len'),
+      upper: qs('#chk-upper'),
+      lower: qs('#chk-lower'),
+      digit: qs('#chk-digit'),
+    };
+
+    function checkRule(li, pass) {
+      li.classList.toggle('met', pass);
+      const mark = li.querySelector('.check-mark');
+      const dash = li.querySelector('.dash-mark');
+      if (mark) mark.style.display = pass ? '' : 'none';
+      if (dash) dash.style.display = pass ? 'none' : '';
+    }
+
+    function scorePassword(pw) {
+      const rules = {
+        len:   pw.length >= 8,
+        upper: /[A-Z]/.test(pw),
+        lower: /[a-z]/.test(pw),
+        digit: /\d/.test(pw),
+      };
+      const count = Object.values(rules).filter(Boolean).length;
+      return { rules, count };
+    }
+
+    pwInput.addEventListener('input', function () {
+      const pw = pwInput.value;
+      if (!pw) {
+        strengthEl.style.display = 'none';
+        return;
+      }
+      strengthEl.style.display = '';
+      const { rules, count } = scorePassword(pw);
+
+      checkRule(chks.len,   rules.len);
+      checkRule(chks.upper, rules.upper);
+      checkRule(chks.lower, rules.lower);
+      checkRule(chks.digit, rules.digit);
+
+      // Extra point for length >= 12
+      const bonus = pw.length >= 12 ? 1 : 0;
+      const total = count + bonus;
+
+      let level = 'weak', labelText = 'Weak', labelClass = 'lbl-weak';
+      if (total >= 5) { level = 'strong'; labelText = 'Strong'; labelClass = 'lbl-strong'; }
+      else if (total >= 3) { level = 'okay';  labelText = 'Okay';   labelClass = 'lbl-okay'; }
+
+      segs.forEach(function (s) { s.className = 'pw-bar-seg'; });
+      if (level === 'weak')   { segs[0].classList.add('lit-weak'); }
+      if (level === 'okay')   { segs[0].classList.add('lit-okay'); segs[1].classList.add('lit-okay'); }
+      if (level === 'strong') { segs.forEach(function(s){ s.classList.add('lit-strong'); }); }
+
+      strengthLabel.innerHTML = '<span class="' + labelClass + '">' + labelText + '</span>';
+    });
+
+    // ── Validation helpers ────────────────────────────────────────────
+    function validateEmail(val) {
+      val = val.trim();
+      if (!val) return 'Please enter your email address.';
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(val))
+        return 'That email looks incomplete. Try name@example.com';
+      return null;
+    }
+    function validatePassword(val) {
+      if (!val) return 'Please enter a password.';
+      if (val.length < 8) return 'Password must be at least 8 characters.';
+      if (val.length > 64) return 'Password is too long (max 64 characters).';
+      if (!/[A-Z]/.test(val)) return 'Add at least one uppercase letter.';
+      if (!/[a-z]/.test(val)) return 'Add at least one lowercase letter.';
+      if (!/\d/.test(val))    return 'Add at least one number.';
+      return null;
+    }
+
+    // ── Blur + live validation ─────────────────────────────────────────
+    // Track which fields have been touched
+    const touched = {};
+
+    function attachValidation(inputEl, errEl, validator) {
+      inputEl.addEventListener('blur', function () {
+        touched[inputEl.id] = true;
+        const err = validator(inputEl.value);
+        if (err) setError(errEl, err); else clearError(errEl);
+      });
+      inputEl.addEventListener('input', function () {
+        if (!touched[inputEl.id]) return;
+        const err = validator(inputEl.value);
+        if (err) setError(errEl, err); else clearError(errEl);
+      });
+    }
+
+    // Login fields
+    attachValidation(
+      qs('#login-email'), qs('#login-email-err'), validateEmail
+    );
+    attachValidation(
+      qs('#login-password'), qs('#login-password-err'),
+      function (v) { return v ? null : 'Please enter your password.'; }
+    );
+
+    // Signup fields
+    attachValidation(
+      qs('#signup-name'), qs('#signup-name-err'),
+      function (v) { return v.trim() ? null : 'Please enter your full name.'; }
+    );
+    attachValidation(qs('#signup-email'), qs('#signup-email-err'), validateEmail);
+    attachValidation(qs('#signup-password'), qs('#signup-password-err'), validatePassword);
+
+    const confirmEl  = qs('#signup-confirm');
+    const confirmErr = qs('#signup-confirm-err');
+    confirmEl.addEventListener('blur', function () {
+      touched[confirmEl.id] = true;
+      validateConfirm();
+    });
+    confirmEl.addEventListener('input', function () {
+      if (!touched[confirmEl.id]) return;
+      validateConfirm();
+    });
+    pwInput.addEventListener('input', function () {
+      if (!touched[confirmEl.id]) return;
+      validateConfirm();
+    });
+    function validateConfirm() {
+      if (confirmEl.value && confirmEl.value !== pwInput.value)
+        setError(confirmErr, "Passwords don't match yet.");
+      else clearError(confirmErr);
+    }
+
+    // ── LOGIN FORM SUBMISSION ─────────────────────────────────────────
+    const loginForm   = qs('#login-form');
+    const loginBtn    = qs('#login-submit');
+    const loginBanner = qs('#login-banner');
+    const loginBannerText = qs('#login-banner-text');
+
+    loginForm.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      hideBanner(loginBanner);
+
+      const email = qs('#login-email').value.trim();
+      const password = qs('#login-password').value;
+
+      // Touch all fields
+      touched['login-email']    = true;
+      touched['login-password'] = true;
+
+      let valid = true;
+      const emailErr = validateEmail(email);
+      if (emailErr) { setError(qs('#login-email-err'), emailErr); valid = false; }
+      else clearError(qs('#login-email-err'));
+      if (!password) { setError(qs('#login-password-err'), 'Please enter your password.'); valid = false; }
+      else clearError(qs('#login-password-err'));
+      if (!valid) return;
+
+      // Loading state
+      loginBtn.disabled = true;
+      loginBtn.classList.add('loading');
+
+      try {
+        // POST to Chainlit's own /login endpoint using
+        // application/x-www-form-urlencoded (OAuth2PasswordRequestForm).
+        const body = new URLSearchParams();
+        body.append('username', email);
+        body.append('password', password);
+
+        const res = await fetch('/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString(),
+          credentials: 'include',
+          redirect: 'follow',
+        });
+
+        if (res.ok || res.redirected) {
+          // Chainlit sets the auth cookie; redirect to the chat app.
+          window.location.href = '/';
+        } else {
+          let detail = 'Email or password is incorrect.';
+          try {
+            const data = await res.json();
+            // Never expose which field was wrong — use generic message
+            if (data.detail === 'credentialssignin' || res.status === 401) {
+              detail = 'Email or password is incorrect.';
+            }
+          } catch (_) {}
+          showBanner(loginBanner, loginBannerText, detail, 'error');
+        }
+      } catch (err) {
+        showBanner(loginBanner, loginBannerText,
+          'Network error. Please check your connection and try again.', 'error');
+      } finally {
+        loginBtn.disabled = false;
+        loginBtn.classList.remove('loading');
+      }
+    });
+
+    // ── SIGNUP FORM SUBMISSION ────────────────────────────────────────
+    const signupForm   = qs('#signup-form');
+    const signupBtn    = qs('#signup-submit');
+    const signupBanner = qs('#signup-banner');
+    const signupBannerText = qs('#signup-banner-text');
+
+    signupForm.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      hideBanner(signupBanner);
+
+      const name    = qs('#signup-name').value.trim();
+      const email   = qs('#signup-email').value.trim();
+      const pw      = qs('#signup-password').value;
+      const confirm = qs('#signup-confirm').value;
+      const terms   = qs('#signup-terms').checked;
+
+      // Touch all fields
+      ['signup-name','signup-email','signup-password','signup-confirm'].forEach(function(id){
+        touched[id] = true;
+      });
+
+      let valid = true;
+      function check(inputId, errId, validator) {
+        const err = validator(document.getElementById(inputId).value);
+        if (err) { setError(document.getElementById(errId), err); valid = false; }
+        else clearError(document.getElementById(errId));
+      }
+
+      check('signup-name',     'signup-name-err',
+            function (v) { return v.trim() ? null : 'Please enter your full name.'; });
+      check('signup-email',    'signup-email-err', validateEmail);
+      check('signup-password', 'signup-password-err', validatePassword);
+
+      if (confirm !== pw) {
+        setError(confirmErr, "Passwords don't match yet."); valid = false;
+      } else clearError(confirmErr);
+
+      const termsErr = qs('#signup-terms-err');
+      if (!terms) { termsErr.classList.add('visible'); valid = false; }
+      else         { termsErr.classList.remove('visible'); }
+
+      if (!valid) return;
+
+      // Loading state
+      signupBtn.disabled = true;
+      signupBtn.classList.add('loading');
+
+      try {
+        const res = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email, password: pw, confirm_password: confirm }),
+          credentials: 'include',
+        });
+
+        const data = await res.json().catch(function () { return {}; });
+
+        if (res.ok && data.success) {
+          // Auto-switch to login tab with success hint and pre-filled email
+          sharedEmail = email;
+          switchTab('login');
+          // Show success banner on login panel
+          showBanner(loginBanner, loginBannerText,
+            'Account created! Please log in.', 'success');
+          loginBanner.className = 'banner success visible';
+        } else {
+          showBanner(signupBanner, signupBannerText,
+            data.error || 'Something went wrong. Please try again.', 'error');
+        }
+      } catch (err) {
+        showBanner(signupBanner, signupBannerText,
+          'Network error. Please check your connection and try again.', 'error');
+      } finally {
+        signupBtn.disabled = false;
+        signupBtn.classList.remove('loading');
+      }
+    });
+
+    // ── Forgot password placeholder ───────────────────────────────────
+    qs('#forgot-link').addEventListener('click', function (e) {
+      e.preventDefault();
+      showBanner(loginBanner, loginBannerText,
+        'Password reset is not yet available. Please contact support.', 'error');
+    });
+
+    // ── Initialise from URL params ────────────────────────────────────
+    (function init() {
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get('tab');
+      if (tab === 'signup') switchTab('signup');
+
+      // ?registered=1 → show success on login tab
+      if (params.get('registered') === '1') {
+        showBanner(loginBanner, loginBannerText,
+          'Account created! Please log in.', 'success');
+        loginBanner.className = 'banner success visible';
+      }
+    }());
+  }());
+  </script>
+</body>
+</html>
+"""
