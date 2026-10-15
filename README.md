@@ -46,13 +46,12 @@ NexRecall aims to address this problem by helping users revisit meeting informat
 
 | Component | Technology |
 |---|---|
-| Frontend | To be confirmed |
-| Backend | To be confirmed |
-| Database | To be confirmed |
-| Text Processing | To be confirmed |
-| AI / Language Model | To be confirmed |
-| Reminder System | To be confirmed |
-| Development Tools | To be confirmed |
+| Frontend | html/css|
+| Backend | python |
+| Database | supabase |
+| Text Processing | text-embedding-3-small |
+| AI / Language Model | Nexus AI |
+| Development Tools | Kiro, Antigravity, Git |
 
 ## 5. Key Features
 
@@ -75,14 +74,10 @@ NexRecall aims to address this problem by helping users revisit meeting informat
 1. Clone the project repository:
 
    ```bash
-   git clone <YOUR_GITHUB_REPOSITORY_URL>
+   git clone .com/CloudHarshitha/NexRecall.git)
    ```
 
-2. Navigate to the project directory:
 
-   ```bash
-   cd <YOUR_PROJECT_FOLDER>
-   ```
 
 3. Install the project dependencies according to the project's configuration.
 
@@ -102,13 +97,8 @@ NexRecall aims to address this problem by helping users revisit meeting informat
 
 ## 8. Team Members
 
-| S. No. | Name | Role |
-|---|---|---|
-| 1 | Add name | Add role |
-| 2 | Add name | Add role |
-| 3 | Add name | Add role |
-| 4 | Add name | Add role |
-| 5 | Add name | Add role |
+Harshitha SB
+Chiruvelli Sai Sri
 
 ## 9. Future Enhancements
 
