@@ -8,8 +8,31 @@ Supports:
 - Auth and persistent chat history
 """
 
-import nest_asyncio
-nest_asyncio.apply()
+# ---------------------------------------------------------------------------
+# Patch: anyio 4.x + starlette 0.47+ runs sync endpoints in worker threads
+# via anyio.to_thread.run_sync → sniffio.current_async_library(). sniffio
+# uses a threading.local that worker threads don't inherit, so it raises
+# AsyncLibraryNotFoundError inside every sync Chainlit route (/health etc.).
+#
+# Fix: patch sniffio to return "asyncio" as fallback when no library is set.
+# This must happen before Chainlit/fastapi boot — placing it here at the top
+# of app.py works because Python executes this before any other import chain.
+# ---------------------------------------------------------------------------
+import sniffio as _sniffio
+
+_orig_current_async_library = _sniffio.current_async_library
+
+def _safe_current_async_library():
+    try:
+        return _orig_current_async_library()
+    except _sniffio.AsyncLibraryNotFoundError:
+        return "asyncio"
+
+_sniffio.current_async_library = _safe_current_async_library
+# Also patch the internal reference used by anyio
+import sniffio._impl as _sniffio_impl
+_sniffio_impl.current_async_library = _safe_current_async_library
+# ---------------------------------------------------------------------------
 
 import chainlit as cl
 from dotenv import load_dotenv
@@ -29,8 +52,10 @@ from sqlalchemy.future import select
 # Register the Auth Router
 import auth
 
-# 1. Setup Data Layer for Chainlit
-cl.data_layer = SQLAlchemyDataLayer(conninfo="sqlite+aiosqlite:///app.db")
+# 1. Setup Data Layer for Chainlit via the proper decorator
+@cl.data_layer
+def get_data_layer():
+    return SQLAlchemyDataLayer(conninfo="sqlite+aiosqlite:///app.db")
 
 # Supported file extensions
 SUPPORTED_TEXT_EXTS = {'.txt', '.srt', '.vtt', '.md'}
@@ -88,7 +113,7 @@ async def on_chat_start():
     await cl.Message(content=welcome_message).send()
 
 @cl.on_chat_resume
-async def on_chat_resume(thread: cl.ThreadDict):
+async def on_chat_resume(thread):
     # Restore context based on resumed thread
     thread_id = thread.get("id")
     if not thread_id:

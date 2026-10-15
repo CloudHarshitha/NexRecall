@@ -12,6 +12,7 @@ The login form POSTs directly to Chainlit's own POST /login endpoint
 our @cl.password_auth_callback defined in app.py.
 """
 
+import os
 import re
 import uuid
 import time
@@ -21,7 +22,7 @@ from collections import defaultdict
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from chainlit.server import app as chainlit_app
-from database import AsyncSessionLocal, AppUser, get_password_hash, verify_password
+from database import AsyncSessionLocal, AppUser, get_password_hash, verify_password, init_db
 from sqlalchemy.future import select
 
 logger = logging.getLogger(__name__)
@@ -86,8 +87,32 @@ auth_router = APIRouter()
 
 @auth_router.get("/auth", response_class=HTMLResponse)
 async def auth_page(request: Request):
-    """Serve the combined login / sign-up page."""
-    return HTMLResponse(AUTH_PAGE_HTML)
+    """Serve the combined login / sign-up page (public/auth.html)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "public", "auth.html")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return HTMLResponse(f.read())
+    except FileNotFoundError:
+        return HTMLResponse("Auth page not found.", status_code=500)
+
+
+@auth_router.get("/login")
+async def login_redirect(request: Request):
+    """
+    Server-side redirect: /login → /auth.
+
+    Chainlit's React SPA redirects unauthenticated users to /login on the
+    client side. By intercepting /login here (before Chainlit's catch-all
+    GET /{full_path:path} handler), we send a real HTTP 302 so the browser
+    lands directly on /auth without ever loading the React SPA, eliminating
+    the blank-page flash caused by the double client-side redirect.
+
+    We preserve any ?next= query param so deep links still work after login.
+    """
+    from fastapi.responses import RedirectResponse as _Redirect
+    next_url = request.query_params.get("next", "")
+    dest = "/auth" + (f"?next={next_url}" if next_url else "")
+    return _Redirect(url=dest, status_code=302)
 
 
 @auth_router.post("/api/auth/login")
@@ -98,30 +123,31 @@ async def login_api(request: Request):
 
     Accepts JSON: { email, password }
     On success: sets the Chainlit auth cookie and returns { success: true }.
-    On failure: returns { success: false, error: "..." }.
+    On failure: returns { success: false, message: "..." } (non-2xx).
     """
     from chainlit.server import create_jwt, set_auth_cookie
-    from fastapi.responses import Response as FastAPIResponse
+
+    await init_db()
 
     ip = request.client.host if request.client else "unknown"
 
     # Rate-limit check
     if not _check_rate_limit(ip):
         return JSONResponse(
-            {"success": False, "error": "Too many failed attempts. Try again in 15 minutes."},
+            {"success": False, "message": "Too many failed attempts. Try again in 15 minutes."},
             status_code=429,
         )
 
     try:
         body = await request.json()
     except Exception:
-        return JSONResponse({"success": False, "error": "Invalid request body."}, status_code=400)
+        return JSONResponse({"success": False, "message": "Invalid request body."}, status_code=400)
 
     email    = sanitize_str(body.get("email", "")).lower()
     password = body.get("password", "")
 
     if not email or not password:
-        return JSONResponse({"success": False, "error": "Email and password are required."}, status_code=422)
+        return JSONResponse({"success": False, "message": "Email and password are required."}, status_code=422)
 
     # Verify credentials
     async with AsyncSessionLocal() as session:
@@ -131,7 +157,7 @@ async def login_api(request: Request):
     if not user or not verify_password(password, user.password_hash):
         _record_failure(ip)
         return JSONResponse(
-            {"success": False, "error": "Email or password is incorrect."},
+            {"success": False, "message": "Email or password is incorrect."},
             status_code=401,
         )
 
@@ -146,7 +172,7 @@ async def login_api(request: Request):
     access_token = create_jwt(cl_user)
 
     # Return success with the cookie set
-    response = JSONResponse({"success": True})
+    response = JSONResponse({"success": True, "message": "Signed in."})
     set_auth_cookie(request, response, access_token)
     return response
 
@@ -156,37 +182,39 @@ async def register(request: Request):
     """
     Create a new user account.
 
-    Accepts JSON: { name, email, password, confirm_password }
-    Returns JSON: { success, error?, redirect? }
+    Accepts JSON: { name, email, password, confirm_password? }
+    Returns JSON: { success, message?, redirect? }
     """
+    await init_db()
+
     # --- Parse body ---
     try:
         body = await request.json()
     except Exception:
-        return JSONResponse({"success": False, "error": "Invalid request body."}, status_code=400)
+        return JSONResponse({"success": False, "message": "Invalid request body."}, status_code=400)
 
     name             = sanitize_str(body.get("name", ""))
     email            = sanitize_str(body.get("email", "")).lower()
     password         = body.get("password", "")
-    confirm_password = body.get("confirm_password", "")
+    confirm_password = body.get("confirm_password", password)  # optional for the new UI
 
     # --- Server-side validation ---
     if not name:
-        return JSONResponse({"success": False, "error": "Please enter your full name."}, status_code=422)
+        return JSONResponse({"success": False, "message": "Please enter your full name."}, status_code=422)
     if not email or "@" not in email or "." not in email.split("@")[-1]:
-        return JSONResponse({"success": False, "error": "That email looks incomplete. Try name@example.com"}, status_code=422)
+        return JSONResponse({"success": False, "message": "That email looks incomplete. Try name@example.com"}, status_code=422)
     pw_error = validate_password(password)
     if pw_error:
-        return JSONResponse({"success": False, "error": pw_error}, status_code=422)
+        return JSONResponse({"success": False, "message": pw_error}, status_code=422)
     if password != confirm_password:
-        return JSONResponse({"success": False, "error": "Passwords don't match."}, status_code=422)
+        return JSONResponse({"success": False, "message": "Passwords don't match."}, status_code=422)
 
     # --- Persist user ---
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(AppUser).where(AppUser.email == email))
         if result.scalar_one_or_none():
             return JSONResponse(
-                {"success": False, "error": "That email is already registered. Try logging in."},
+                {"success": False, "message": "That email is already registered. Try logging in."},
                 status_code=409,
             )
         new_user = AppUser(
@@ -199,7 +227,64 @@ async def register(request: Request):
         await session.commit()
 
     logger.info("New user registered: %s", email)
-    return JSONResponse({"success": True, "redirect": "/auth?tab=login&registered=1"})
+    return JSONResponse({"success": True, "message": "Account created.", "redirect": "/"})
+
+
+@auth_router.post("/api/auth/forgot-password")
+async def forgot_password(request: Request):
+    """
+    Password reset request.
+
+    Accepts JSON: { email }
+    Always returns 200 with a generic message to avoid email enumeration.
+    Email sending is not wired up (no SMTP config) — this is a safe no-op stub.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    email = sanitize_str(body.get("email", "")).lower()
+    if email:
+        logger.info("Password reset requested for: %s", email)
+    return JSONResponse(
+        {"success": True, "message": "If an account exists, a reset link is on its way."},
+        status_code=200,
+    )
+
+
+def _sso_not_configured_html(provider_name: str) -> str:
+    html = """<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · NexRecall</title>
+<style>
+body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:system-ui,"Segoe UI",Roboto,sans-serif;background:#06030F;color:#F4EEFF;text-align:center;padding:24px}
+.box{max-width:440px;padding:40px 32px;border:1px solid rgba(255,255,255,.12);border-radius:22px;background:linear-gradient(180deg,rgba(40,20,82,.5),rgba(14,6,32,.62))}
+h1{font-size:24px;margin:0 0 12px;letter-spacing:-.02em}
+p{color:#A99BCB;line-height:1.55;margin:0 0 24px;font-size:15.5px}
+a{display:inline-block;padding:11px 20px;border-radius:999px;background:#6EF0C4;color:#06281D;text-decoration:none;font-weight:650;font-size:15px}
+</style></head>
+<body><div class="box">
+<h1>__PROVIDER__ sign-in isn't configured yet</h1>
+<p>This provider hasn't been set up on the server. Use email and password to continue, or ask your admin to enable __PROVIDER__ sign-in.</p>
+<a href="/auth">Back to sign in</a>
+</div></body></html>"""
+    return html.replace("__PROVIDER__", provider_name)
+
+
+@auth_router.get("/api/auth/google")
+async def sso_google(request: Request):
+    """Google SSO entry. Redirects to OAuth when configured, else a friendly notice."""
+    if os.environ.get("OAUTH_GOOGLE_CLIENT_ID") and os.environ.get("OAUTH_GOOGLE_CLIENT_SECRET"):
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/login/oauth/google", status_code=302)
+    return HTMLResponse(_sso_not_configured_html("Google"), status_code=501)
+
+
+@auth_router.get("/api/auth/microsoft")
+async def sso_microsoft(request: Request):
+    """Microsoft SSO entry. Not configured — returns a friendly notice."""
+    return HTMLResponse(_sso_not_configured_html("Microsoft"), status_code=501)
 
 
 # ---------------------------------------------------------------------------
@@ -213,36 +298,55 @@ async def register(request: Request):
 from fastapi.routing import APIRoute as _APIRoute
 
 def _register_before_catchall() -> None:
-    """Insert auth_router routes into Chainlit's router before the catch-all."""
-    from chainlit.server import app as _cl_app
-    # The last entry in app.routes is the _IncludedRouter that holds all
-    # Chainlit routes (including the /{full_path:path} catch-all).
-    included = _cl_app.routes[-1]
-    cl_router = included.original_router
+    """Insert auth_router routes into Chainlit's router before the catch-all.
 
-    # Collect routes from our auth_router (already have APIRoute objects
-    # created by FastAPI when we used @auth_router.get / @auth_router.post).
+    Works with both old Chainlit (routes in an _IncludedRouter wrapper) and
+    new Starlette ≥0.47 (routes flattened directly onto app.routes).
+    """
+    from chainlit.server import app as _cl_app
+    from fastapi.routing import APIRoute as _APIRoute
+
     our_routes = [r for r in auth_router.routes if isinstance(r, _APIRoute)]
 
-    # Find catch-all index
+    # Try flat structure first (starlette >= 0.47)
+    target_list = None
+    for r in _cl_app.routes:
+        if isinstance(r, _APIRoute) and getattr(r, "path", "") == "/{full_path:path}":
+            target_list = _cl_app.routes
+            break
+
+    # Fallback: old _IncludedRouter structure
+    if target_list is None:
+        for r in _cl_app.routes:
+            orig = getattr(r, "original_router", None)
+            if orig is not None:
+                for sub in orig.routes:
+                    if isinstance(sub, _APIRoute) and getattr(sub, "path", "") == "/{full_path:path}":
+                        target_list = orig.routes
+                        break
+            if target_list is not None:
+                break
+
+    if target_list is None:
+        # Last resort: just append to app.routes
+        target_list = _cl_app.routes
+
     catchall_idx = next(
-        (i for i, r in enumerate(cl_router.routes)
+        (i for i, r in enumerate(target_list)
          if isinstance(r, _APIRoute) and getattr(r, "path", "") == "/{full_path:path}"),
-        len(cl_router.routes),  # fallback: append at end
+        len(target_list),
     )
 
-    # Splice our routes in before the catch-all
     for offset, route in enumerate(our_routes):
-        cl_router.routes.insert(catchall_idx + offset, route)
+        target_list.insert(catchall_idx + offset, route)
 
-    # Invalidate FastAPI's route-matching cache so the new routes are visible
-    for attr in ("_effective_candidates", "_effective_low_priority_routes"):
-        cache = getattr(included, attr, None)
-        if cache is not None:
+    # Bust any route-matching cache on the app router
+    for attr in ("_route_cache", "_cached_routes"):
+        if hasattr(_cl_app.router, attr):
             try:
-                cache.cache_clear()
-            except AttributeError:
-                pass  # not a lru_cache; ignore
+                delattr(_cl_app.router, attr)
+            except Exception:
+                pass
 
 _register_before_catchall()
 

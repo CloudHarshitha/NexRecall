@@ -1,0 +1,1205 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+<meta charset="utf-8">
+
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+<title>Sign in · NexRecall</title>
+
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%2306030F'/%3E%3Cpath d='M30.28 7.74A16 16 0 1 0 30.28 32.26' fill='none' stroke='%23B9A2FF' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M34.49 11.28L27.97 10.5L32.59 4.98Z' fill='%23B9A2FF'/%3E%3Cpath d='M14 26.5V13.5M26 26.5V13.5' stroke='%23fff' stroke-width='3.2' stroke-linecap='round'/%3E%3Cpath d='M14 13.5L26 26.5' stroke='%236EF0C4' stroke-width='3.2' stroke-linecap='round'/%3E%3C/svg%3E">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Instrument+Sans:wght@400..700&display=swap" rel="stylesheet">
+
+<style>
+
+:root{
+
+  /* right side: plain light */
+
+  --bg:#FFFFFF; --ink:#14102A; --ink-2:#5F5879; --line:#DDD8EC;
+
+  --accent:#5B3FD1; --accent-soft:rgba(91,63,209,.16);
+
+  --btn:#24104A; --btn-hover:#361A6A;
+
+  --danger:#D6334A; --ok:#12936A;
+
+  color-scheme:light;
+
+  /* left side: dark */
+
+  --st-bg:#06030F; --st-ink:#F4EEFF; --st-dim:#A99BCB; --st-line:rgba(255,255,255,.12);
+
+  --mint:#6EF0C4;
+
+  --display:"Bricolage Grotesque","Avenir Next","Segoe UI",system-ui,sans-serif;
+
+  --text:"Instrument Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+
+}
+
+*,*::before,*::after{box-sizing:border-box}
+
+html,body{height:100%}
+
+html{scroll-padding-top:env(safe-area-inset-top,0px);-webkit-text-size-adjust:100%}
+
+body{margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.5 var(--text);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}
+
+::selection{background:var(--accent);color:#fff}
+
+button{font:inherit;color:inherit;cursor:pointer}
+
+a{color:var(--accent);text-underline-offset:3px}
+
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
+
+.auth{min-height:100%;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(420px,.85fr)}
+
+/* ═════════ LEFT: dark, with the question-and-answer demo ═════════ */
+
+.stage{
+
+  position:relative;color:var(--st-ink);overflow:hidden;isolation:isolate;background:var(--st-bg);
+
+  border-radius:0 36px 36px 0;
+
+  padding:calc(40px + env(safe-area-inset-top,0px)) clamp(32px,4.5vw,76px) 48px;
+
+  display:flex;flex-direction:column;
+
+}
+
+.orb{position:absolute;border-radius:50%;filter:blur(90px);pointer-events:none;z-index:-3}
+
+.o1{width:520px;height:520px;left:-150px;top:-170px;background:#6D3BFF;opacity:.55;animation:d1 24s ease-in-out infinite alternate}
+
+.o2{width:420px;height:420px;right:-130px;top:34%;background:#2F6BFF;opacity:.32;animation:d2 28s ease-in-out infinite alternate}
+
+.o3{width:380px;height:380px;left:20%;bottom:-190px;background:#00D9A5;opacity:.22;animation:d3 32s ease-in-out infinite alternate}
+
+#stars{position:absolute;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none}
+
+.brand,.stage-body{position:relative;z-index:1}
+
+.brand{display:flex;align-items:center;gap:11px}
+
+.logo{width:38px;height:38px;overflow:visible}
+
+.logo .arc{stroke-dasharray:80;animation:drawArc 1.3s cubic-bezier(.4,.1,.2,1) .2s backwards}
+
+.logo .ring{transform-origin:20px 20px;animation:rewind 9s cubic-bezier(.65,0,.25,1) 2.6s infinite}
+
+.logo .head{animation:fadeIn .5s ease 1.2s backwards}
+
+.logo .stems{animation:fadeIn .6s ease .1s backwards}
+
+.logo .diag{filter:drop-shadow(0 0 4px rgba(110,240,196,.85));animation:diagIn .6s ease .5s backwards,glow 3.2s ease-in-out 2s infinite}
+
+.wm{font:500 24px/1 var(--display);letter-spacing:-.03em}
+
+.wm b{font-weight:800}
+
+.stage-body{margin:auto 0;padding:36px 0 8px}
+
+.stage h2{margin:0;max-width:16ch;text-wrap:balance;font:600 clamp(2.3rem,3.3vw,3.4rem)/1.04 var(--display);letter-spacing:-.035em}
+
+.stage-sub{margin:16px 0 0;max-width:44ch;font-size:17px;line-height:1.55;color:var(--st-dim)}
+
+.chat{
+
+  margin-top:38px;max-width:560px;border:1px solid var(--st-line);border-radius:22px;overflow:hidden;
+
+  background:linear-gradient(180deg,rgba(40,20,82,.5),rgba(14,6,32,.62));
+
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+
+  box-shadow:0 40px 80px -40px rgba(0,0,0,.85),inset 0 1px 0 rgba(255,255,255,.1);
+
+}
+
+.chat-head{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:14px 20px;border-bottom:1px solid var(--st-line);transition:opacity .35s}
+
+.chat-head .t{font:600 14.5px/1.2 var(--display)}
+
+.chat-head .d{font-size:13px;color:var(--st-dim)}
+
+.chat-body{padding:20px 20px 8px;min-height:372px;display:flex;flex-direction:column;gap:16px;transition:opacity .35s}
+
+.chat.out .chat-head,.chat.out .chat-body{opacity:0}
+
+.msg{display:flex;gap:10px;opacity:0;transform:translateY(10px);transition:opacity .4s ease,transform .4s cubic-bezier(.3,.7,.2,1)}
+
+.msg.on{opacity:1;transform:none}
+
+.msg.user{justify-content:flex-end}
+
+.bubble-u{max-width:82%;padding:11px 15px;border-radius:18px 18px 4px 18px;background:linear-gradient(135deg,#6D4BF2,#8C69FF);color:#fff;font-size:15.5px;line-height:1.4;box-shadow:0 12px 24px -14px rgba(109,75,242,.9)}
+
+.a-av{flex:none;width:30px;height:30px;margin-top:2px}
+
+.a-main{min-width:0;flex:1}
+
+.dots{display:inline-flex;gap:5px;padding:12px 4px 4px}
+
+.dots i{width:7px;height:7px;border-radius:50%;background:var(--st-dim);animation:bounce 1s ease-in-out infinite}
+
+.dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}
+
+.a-text{margin:0;font:500 17.5px/1.45 var(--display);letter-spacing:-.01em}
+
+.w{display:inline-block;white-space:pre;opacity:0;filter:blur(4px);transition:opacity .4s ease,filter .4s ease}
+
+.w.on{opacity:1;filter:none}
+
+.excerpt{margin-top:14px;border:1px solid var(--st-line);border-radius:14px;background:rgba(255,255,255,.04);overflow:hidden;opacity:0;transform:translateY(8px);transition:opacity .45s ease,transform .45s ease}
+
+.excerpt.on{opacity:1;transform:none}
+
+.ex-head{padding:8px 14px;font-size:12.5px;color:var(--st-dim);border-bottom:1px solid var(--st-line)}
+
+.ex-line{display:grid;grid-template-columns:48px 1fr;gap:10px;padding:10px 14px;font-size:14px;line-height:1.45;color:rgba(255,255,255,.84);opacity:0;transform:translateY(6px);transition:opacity .4s ease,transform .4s ease}
+
+.ex-line.on{opacity:1;transform:none}
+
+.ex-line+.ex-line{border-top:1px solid rgba(255,255,255,.07)}
+
+.ex-line time{color:var(--mint);font-weight:600;font-variant-numeric:tabular-nums;padding-top:1px}
+
+.ex-line b{display:block;font-size:13px;font-weight:650;color:#fff}
+
+.chat-input{display:flex;align-items:center;gap:10px;margin:8px 16px 16px;padding:6px 6px 6px 18px;min-height:52px;border:1px solid var(--st-line);border-radius:999px;background:rgba(255,255,255,.05);font-size:15.5px}
+
+.chat-input .grow{flex:1;min-width:0}
+
+.q:empty::before{content:"Ask about this meeting";color:var(--st-dim)}
+
+.caret{display:inline-block;width:2px;height:1.15em;margin-left:2px;vertical-align:-3px;background:var(--mint);animation:blink 1s steps(1) infinite}
+
+.send{flex:none;width:38px;height:38px;border-radius:50%;background:var(--mint);color:#06281D;display:grid;place-items:center;transition:transform .2s}
+
+.send svg{width:18px;height:18px}
+
+.send.press{transform:scale(.82)}
+
+/* ═════════ RIGHT: plain light form ═════════ */
+
+.panel{display:grid;place-items:center;padding:56px clamp(24px,5vw,72px) calc(56px + env(safe-area-inset-bottom,0px))}
+
+.form-wrap{width:100%;max-width:400px}
+
+.views{display:grid}
+
+.view{grid-area:1/1;transition:opacity .35s ease,transform .35s ease,visibility 0s linear .35s}
+
+.view-done{opacity:0;visibility:hidden;transform:translateY(10px);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+
+[data-view="done"] .view-main{opacity:0;visibility:hidden;pointer-events:none}
+
+[data-view="done"] .view-done{opacity:1;visibility:visible;transform:none;transition:opacity .4s ease .15s,transform .4s ease .15s,visibility 0s}
+
+.form-head{margin:0 0 26px;transition:opacity .15s ease}
+
+.form-head.swap{opacity:0}
+
+.form-head h1{margin:0;font:600 clamp(1.9rem,2.6vw,2.3rem)/1.1 var(--display);letter-spacing:-.03em}
+
+.form-head p{margin:8px 0 0;color:var(--ink-2);font-size:15.5px}
+
+.collapse{display:grid;grid-template-rows:0fr;opacity:0;visibility:hidden;transition:grid-template-rows .4s cubic-bezier(.3,.7,.2,1),opacity .22s ease,visibility 0s linear .4s}
+
+.collapse>.inner{min-height:0;overflow:hidden;padding:4px;margin:-4px}
+
+[data-mode="signin"] .collapse[data-show~="signin"],
+
+[data-mode="signup"] .collapse[data-show~="signup"],
+
+[data-mode="reset"] .collapse[data-show~="reset"]{grid-template-rows:1fr;opacity:1;visibility:visible;transition:grid-template-rows .4s cubic-bezier(.3,.7,.2,1),opacity .3s ease .08s,visibility 0s}
+
+.field{margin-bottom:16px}
+
+.field.flush{margin-bottom:0}
+
+.field>label:not(.chk),.lab-row label{display:block;margin-bottom:7px;font-size:14px;font-weight:600}
+
+.lab-row{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+
+.lab-row .link{display:none;margin-bottom:7px}
+
+[data-mode="signin"] .lab-row .link{display:inline}
+
+.inp-wrap{position:relative}
+
+.inp{width:100%;height:50px;padding:0 15px;border:1.5px solid var(--line);border-radius:12px;background:#fff;color:var(--ink);font:inherit;font-size:16px;outline:none;transition:border-color .2s,box-shadow .2s}
+
+.inp::placeholder{color:#9A93B2}
+
+.inp:hover{border-color:#C4BCDD}
+
+.inp:focus{border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
+
+.field.invalid .inp{border-color:var(--danger)}
+
+.field.invalid .inp:focus{box-shadow:0 0 0 4px rgba(214,51,74,.18)}
+
+.pw .inp{padding-right:50px}
+
+.eye{position:absolute;right:5px;top:5px;width:40px;height:40px;display:grid;place-items:center;border:0;background:none;border-radius:9px;color:var(--ink-2)}
+
+.eye:hover{color:var(--ink)}
+
+.eye svg{width:20px;height:20px}
+
+.eye .off{display:none}
+
+.eye[aria-pressed="true"] .on{display:none}
+
+.eye[aria-pressed="true"] .off{display:block}
+
+.hint{display:none;margin:7px 0 0;font-size:13px;color:var(--ink-2)}
+
+[data-mode="signup"] .hint{display:block}
+
+.err-wrap{display:grid;grid-template-rows:0fr;transition:grid-template-rows .25s ease}
+
+.err-wrap>.err{min-height:0;overflow:hidden;margin:0;font-size:13px;line-height:1.4;color:var(--danger)}
+
+.field.invalid .err-wrap,.form-error.on .err-wrap{grid-template-rows:1fr}
+
+.field.invalid .err-wrap>.err,.form-error.on .err-wrap>.err{padding-top:6px}
+
+.link{border:0;background:none;padding:0;color:var(--accent);font-weight:600;font-size:14px;text-underline-offset:3px}
+
+.link:hover{text-decoration:underline}
+
+.chk{display:flex;gap:11px;align-items:flex-start;cursor:pointer;font-size:14px;color:var(--ink-2);line-height:1.45}
+
+.chk input{position:absolute;opacity:0;pointer-events:none}
+
+.box{flex:none;width:20px;height:20px;margin-top:1px;border-radius:6px;border:1.5px solid var(--line);background:#fff;display:grid;place-items:center;transition:background .2s,border-color .2s,box-shadow .2s}
+
+.box svg{width:12px;height:12px;stroke:#fff;stroke-width:3;fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:20;stroke-dashoffset:20;transition:stroke-dashoffset .25s ease}
+
+.chk input:checked+.box{background:var(--btn);border-color:var(--btn)}
+
+.chk input:checked+.box svg{stroke-dashoffset:0}
+
+.chk input:focus-visible+.box{box-shadow:0 0 0 4px var(--accent-soft);border-color:var(--accent)}
+
+.field.invalid .box{border-color:var(--danger)}
+
+.terms-wrap{padding-top:2px}
+
+.cta{position:relative;width:100%;height:52px;margin-top:20px;border:0;border-radius:12px;overflow:hidden;background:var(--btn);color:#fff;font-weight:650;font-size:16px;transition:background .2s,transform .15s}
+
+.cta:hover{background:var(--btn-hover)}
+
+.cta:active{transform:translateY(1px)}
+
+.cta .lbl{display:inline-block;transition:opacity .2s,transform .2s}
+
+.cta .spin,.cta .tick{position:absolute;left:50%;top:50%;opacity:0;transition:opacity .2s}
+
+.cta .spin{width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;border:2.5px solid rgba(255,255,255,.3);border-top-color:#fff;animation:spin .75s linear infinite}
+
+.cta .tick{width:26px;height:26px;margin:-13px 0 0 -13px;stroke:#fff;stroke-width:3;fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:30;stroke-dashoffset:30}
+
+.cta[data-state="loading"]{cursor:progress}
+
+.cta[data-state="loading"] .lbl,.cta[data-state="success"] .lbl{opacity:0;transform:translateY(-8px)}
+
+.cta[data-state="loading"] .spin{opacity:1}
+
+.cta[data-state="success"]{background:var(--ok)}
+
+.cta[data-state="success"] .tick{opacity:1;animation:draw .4s ease .05s forwards}
+
+.cta.shake{animation:shake .42s cubic-bezier(.36,.07,.19,.97)}
+
+.form-error{margin-top:12px}
+
+.form-error .err{text-align:center}
+
+.alt{margin:22px 0 0;text-align:center;color:var(--ink-2);font-size:14.5px}
+
+.alt .link{margin-left:4px}
+
+.done-ring{width:80px;height:80px;margin-bottom:20px}
+
+.done-ring circle{fill:none;stroke:var(--ok);stroke-width:3;stroke-dasharray:227;stroke-dashoffset:227;transform:rotate(-90deg);transform-origin:center}
+
+.done-ring path{fill:none;stroke:var(--ok);stroke-width:4;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:54;stroke-dashoffset:54}
+
+.done-ring.play circle{animation:draw .6s ease .15s forwards}
+
+.done-ring.play path{animation:draw .4s ease .65s forwards}
+
+.view-done h2{margin:0;font:600 1.9rem/1.1 var(--display);letter-spacing:-.03em}
+
+.view-done p{margin:10px 0 0;color:var(--ink-2);max-width:34ch}
+
+.prog{width:180px;height:4px;border-radius:4px;background:var(--line);margin-top:24px;overflow:hidden}
+
+.prog i{display:block;height:100%;width:0;background:var(--ok);border-radius:4px;transition:width 2.2s cubic-bezier(.4,.1,.2,1)}
+
+.prog.go i{width:100%}
+
+.view-done .back{margin-top:20px}
+
+@keyframes drawArc{from{stroke-dashoffset:80}}
+
+@keyframes rewind{0%,80%{transform:rotate(0)}100%{transform:rotate(-360deg)}}
+
+@keyframes fadeIn{from{opacity:0}}
+
+@keyframes diagIn{from{opacity:0;transform:translate(-3px,-3px)}}
+
+@keyframes glow{0%,100%{filter:drop-shadow(0 0 3px rgba(110,240,196,.6))}50%{filter:drop-shadow(0 0 8px rgba(110,240,196,1))}}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+
+@keyframes blink{50%{opacity:0}}
+
+@keyframes draw{to{stroke-dashoffset:0}}
+
+@keyframes bounce{0%,60%,100%{transform:translateY(0);opacity:.5}30%{transform:translateY(-5px);opacity:1}}
+
+@keyframes d1{to{transform:translate(90px,70px) scale(1.15)}}
+
+@keyframes d2{to{transform:translate(-110px,60px) scale(.9)}}
+
+@keyframes d3{to{transform:translate(80px,-90px) scale(1.2)}}
+
+@keyframes shake{10%,90%{transform:translateX(-1px)}20%,80%{transform:translateX(3px)}30%,50%,70%{transform:translateX(-5px)}40%,60%{transform:translateX(5px)}}
+
+@media (max-width:900px){
+
+  .auth{grid-template-columns:1fr}
+
+  .stage{border-radius:0 0 28px 28px;padding:calc(22px + env(safe-area-inset-top,0px)) 24px 30px}
+
+  .stage-sub,.chat{display:none}
+
+  .stage-body{padding:24px 0 0}
+
+  .stage h2{font-size:1.9rem;max-width:18ch}
+
+  .panel{padding:34px 22px calc(44px + env(safe-area-inset-bottom,0px))}
+
+}
+
+
+
+@media (prefers-reduced-motion: reduce){
+
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;transition-delay:0s!important}
+
+  .caret{animation:none}
+
+}
+
+</style>
+
+</head>
+
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+
+  <defs>
+
+    <linearGradient id="nxRing" gradientUnits="userSpaceOnUse" x1="0" y1="4" x2="0" y2="36">
+
+      <stop offset="0" stop-color="#C9B8FF"/><stop offset="1" stop-color="#6EF0C4"/>
+
+    </linearGradient>
+
+    <!-- NexRecall mark: an "N" inside a rewind ring (recall = go back to the moment) -->
+
+    <symbol id="nexmark" viewBox="0 0 40 40">
+
+      <path d="M30.28 7.74A16 16 0 1 0 30.28 32.26" fill="none" stroke="url(#nxRing)" stroke-width="3" stroke-linecap="round"/>
+
+      <path d="M34.49 11.28L27.97 10.5L32.59 4.98Z" fill="#C9B8FF" stroke="#C9B8FF" stroke-width="1.2" stroke-linejoin="round"/>
+
+      <path d="M14 26.5V13.5M26 26.5V13.5" fill="none" stroke="#F4EEFF" stroke-width="3.2" stroke-linecap="round"/>
+
+      <path d="M14 13.5L26 26.5" fill="none" stroke="#6EF0C4" stroke-width="3.2" stroke-linecap="round"/>
+
+    </symbol>
+
+  </defs>
+
+</svg>
+
+<main class="auth">
+
+  <!-- ═════════ Left: someone asks a question about a meeting transcript ═════════ -->
+
+  <section class="stage" id="stage" aria-label="About NexRecall">
+
+    <div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div>
+
+    <canvas id="stars" aria-hidden="true"></canvas>
+
+    <div class="brand">
+
+      <svg class="logo" viewBox="0 0 40 40" aria-hidden="true">
+
+        <g class="ring">
+
+          <path class="arc" d="M30.28 7.74A16 16 0 1 0 30.28 32.26" fill="none" stroke="url(#nxRing)" stroke-width="3" stroke-linecap="round"/>
+
+          <path class="head" d="M34.49 11.28L27.97 10.5L32.59 4.98Z" fill="#C9B8FF" stroke="#C9B8FF" stroke-width="1.2" stroke-linejoin="round"/>
+
+        </g>
+
+        <path class="stems" d="M14 26.5V13.5M26 26.5V13.5" fill="none" stroke="#F4EEFF" stroke-width="3.2" stroke-linecap="round"/>
+
+        <path class="diag" d="M14 13.5L26 26.5" fill="none" stroke="#6EF0C4" stroke-width="3.2" stroke-linecap="round"/>
+
+      </svg>
+
+      <span class="wm"><b>Nex</b>Recall</span>
+
+    </div>
+
+    <div class="stage-body">
+
+      <h2>Ask your past meetings anything.</h2>
+
+      <p class="stage-sub">Search across every recording and get a direct answer, with the exact lines from the transcript.</p>
+
+      <div class="chat" id="chat" aria-hidden="true">
+
+        <div class="chat-head"><span class="t" id="mTitle">Product sync</span><span class="d" id="mDate">Tue 13 Oct</span></div>
+
+        <div class="chat-body" id="msgs"></div>
+
+        <div class="chat-input">
+
+          <span class="grow"><span class="q" id="q"></span><span class="caret"></span></span>
+
+          <span class="send" id="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></span>
+
+        </div>
+
+      </div>
+
+    </div>
+
+  </section>
+
+  <!-- ═════════ Right: simple light form ═════════ -->
+
+  <section class="panel">
+
+    <div class="form-wrap" id="formWrap" data-mode="signin" data-view="main">
+
+      <div class="views">
+
+        <div class="view view-main">
+
+          <header class="form-head" id="formHead">
+
+            <h1 id="title">Sign in</h1>
+
+            <p id="sub">Welcome back. Enter your details to continue.</p>
+
+          </header>
+
+
+
+          <form id="authForm" novalidate>
+
+            <div class="collapse" data-show="signup"><div class="inner">
+
+              <div class="field">
+
+                <label for="name">Full name</label>
+
+                <input class="inp" id="name" name="name" type="text" placeholder="Alex Morgan" autocomplete="name" aria-describedby="name-err">
+
+                <div class="err-wrap"><p class="err" id="name-err" role="alert"></p></div>
+
+              </div>
+
+            </div></div>
+
+            <div class="field">
+
+              <label for="email">Work email</label>
+
+              <input class="inp" id="email" name="email" type="email" placeholder="you@company.com" autocomplete="email" inputmode="email" aria-describedby="email-err">
+
+              <div class="err-wrap"><p class="err" id="email-err" role="alert"></p></div>
+
+            </div>
+
+            <div class="collapse" data-show="signin signup"><div class="inner">
+
+              <div class="field pw flush">
+
+                <div class="lab-row">
+
+                  <label for="password">Password</label>
+
+                  <button class="link" type="button" data-go="reset">Forgot password?</button>
+
+                </div>
+
+                <div class="inp-wrap">
+
+                  <input class="inp" id="password" name="password" type="password" placeholder="Enter your password" autocomplete="current-password" aria-describedby="password-err">
+
+                  <button class="eye" id="eye" type="button" aria-label="Show password" aria-pressed="false">
+
+                    <svg class="on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+
+                    <svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 5.2A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6A16.5 16.5 0 0 0 2 12s3.6 7 10 7a10 10 0 0 0 4.4-1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2M3 3l18 18"/></svg>
+
+                  </button>
+
+                </div>
+
+                <p class="hint">Use at least 8 characters.</p>
+
+                <div class="err-wrap"><p class="err" id="password-err" role="alert"></p></div>
+
+              </div>
+
+            </div></div>
+
+            <div class="collapse" data-show="signup"><div class="inner terms-wrap">
+
+              <div class="field flush" style="margin-top:14px">
+
+                <label class="chk" style="font-weight:400;margin:0">
+
+                  <input type="checkbox" id="terms" aria-describedby="terms-err">
+
+                  <span class="box"><svg viewBox="0 0 16 16"><path d="M3 8.5 6.5 12 13 4.5"/></svg></span>
+
+                  <span>I agree to the <a href="#">Terms</a> and <a href="#">Privacy Policy</a>.</span>
+
+                </label>
+
+                <div class="err-wrap"><p class="err" id="terms-err" role="alert"></p></div>
+
+              </div>
+
+            </div></div>
+
+            <button class="cta" id="cta" type="submit" data-state="idle">
+
+              <span class="lbl" id="ctaLbl">Sign in</span>
+
+              <span class="spin" aria-hidden="true"></span>
+
+              <svg class="tick" viewBox="0 0 26 26" aria-hidden="true"><path d="M5 13.5 10.5 19 21 7.5"/></svg>
+
+            </button>
+
+            <div class="form-error" id="formError"><div class="err-wrap"><p class="err" role="alert"></p></div></div>
+
+          </form>
+
+          <p class="alt"><span id="altText">New to NexRecall?</span><button class="link" type="button" id="altBtn" data-go="signup">Create an account</button></p>
+
+        </div>
+
+        <div class="view view-done" aria-live="polite">
+
+          <svg class="done-ring" id="doneRing" viewBox="0 0 80 80" aria-hidden="true"><circle cx="40" cy="40" r="36"/><path d="M25 41.5 35.5 52 56 29"/></svg>
+
+          <h2 id="doneTitle">You’re signed in.</h2>
+
+          <p id="doneText">Opening your meetings…</p>
+
+          <div class="prog" id="prog" aria-hidden="true"><i></i></div>
+
+          <button class="link back" id="backBtn" type="button" hidden>Back to sign in</button>
+
+        </div>
+
+      </div>
+
+    </div>
+
+  </section>
+
+</main>
+
+<script>
+
+(() => {
+
+  "use strict";
+
+  /* ════════════════════════════════════════════════════════════
+
+     CONFIG: wire this up to your backend
+
+     DEMO = true  → simulates network calls (nothing is sent).
+
+     DEMO = false → POSTs JSON to the endpoints below and, on
+
+                    success, redirects to CONFIG.redirect.
+
+     ════════════════════════════════════════════════════════════ */
+
+  const CONFIG = {
+
+    DEMO: false,
+
+    endpoints: {
+
+      signin: "/api/auth/login",            // { email, password }
+
+      signup: "/api/auth/register",         // { name, email, password }
+
+      reset:  "/api/auth/forgot-password"   // { email }
+
+    },
+
+    redirect: "/"
+
+  };
+
+  const $  = (s, r = document) => r.querySelector(s);
+
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  const nextFrame = () => new Promise(r => requestAnimationFrame(() => r()));
+
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  /* ════════════════════════════════════════════════════════════
+
+     1. LEFT SIDE: a question about a meeting, answered from the transcript
+
+     ════════════════════════════════════════════════════════════ */
+
+  const SCENES = [
+
+    { title: "Product sync", date: "Tue 13 Oct",
+
+      question: "What did we decide about the launch date?",
+
+      answer: "You moved the launch to 18 November so QA gets one more week. Priya will confirm the date with the partner team by Friday.",
+
+      lines: [
+
+        { t: "12:41", who: "Priya",  text: "If we push launch to 18 November, QA gets a full extra week." },
+
+        { t: "13:05", who: "Marcus", text: "Agreed. Priya, can you confirm with the partner team by Friday?" }
+
+      ] },
+
+    { title: "Design review", date: "Mon 12 Oct",
+
+      question: "Who is handling the onboarding redesign?",
+
+      answer: "Aisha owns the onboarding redesign, with Dev supporting on the new sign-up flow. First mockups are due next Wednesday.",
+
+      lines: [
+
+        { t: "03:08", who: "Aisha", text: "I’ll take the onboarding redesign. First mockups by next Wednesday." },
+
+        { t: "22:47", who: "Dev",   text: "I can help with the sign-up flow side." }
+
+      ] },
+
+    { title: "Acme renewal call", date: "Fri 9 Oct",
+
+      question: "Why was the client unhappy about pricing?",
+
+      answer: "They were worried about per-seat costs once their team grows past 50 people. Sam offered to look at annual billing.",
+
+      lines: [
+
+        { t: "08:12", who: "Jordan", text: "Per-seat pricing gets expensive for us once we pass 50 people." },
+
+        { t: "40:55", who: "Sam",    text: "Let me look at annual billing options for you." }
+
+      ] }
+
+  ];
+
+  const chat = $("#chat"), msgs = $("#msgs"), qEl = $("#q"), send = $("#send");
+
+  function words(text) {
+
+    return text.split(" ").map((w, i, a) => {
+
+      const s = document.createElement("span"); s.className = "w"; s.textContent = w + (i < a.length - 1 ? " " : ""); return s;
+
+    });
+
+  }
+
+  function userMsg(text) {
+
+    const m = document.createElement("div"); m.className = "msg user";
+
+    const b = document.createElement("div"); b.className = "bubble-u"; b.textContent = text;
+
+    m.append(b); return m;
+
+  }
+
+  function botMsg() {
+
+    const m = document.createElement("div"); m.className = "msg";
+
+    const av = document.createElementNS("http://www.w3.org/2000/svg", "svg"); av.setAttribute("class", "a-av");
+
+    const use = document.createElementNS("http://www.w3.org/2000/svg", "use"); use.setAttribute("href", "#nexmark"); av.append(use);
+
+    const main = document.createElement("div"); main.className = "a-main";
+
+    m.append(av, main); return { m, main };
+
+  }
+
+  function dots() { const d = document.createElement("span"); d.className = "dots"; d.innerHTML = "<i></i><i></i><i></i>"; return d; }
+
+  function excerpt(lines) {
+
+    const ex = document.createElement("div"); ex.className = "excerpt";
+
+    const h = document.createElement("div"); h.className = "ex-head"; h.textContent = "From the transcript"; ex.append(h);
+
+    const els = lines.map(l => {
+
+      const row = document.createElement("div"); row.className = "ex-line";
+
+      const t = document.createElement("time"); t.textContent = l.t;
+
+      const d = document.createElement("div"); const b = document.createElement("b"); b.textContent = l.who;
+
+      d.append(b, document.createTextNode(l.text)); row.append(t, d); ex.append(row); return row;
+
+    });
+
+    return { ex, els };
+
+  }
+
+  async function play(s) {
+
+    chat.classList.add("out"); await sleep(380);
+
+    msgs.textContent = ""; qEl.textContent = "";
+
+    $("#mTitle").textContent = s.title; $("#mDate").textContent = s.date;
+
+    await sleep(60); chat.classList.remove("out"); await sleep(700);
+
+    for (const ch of s.question) { qEl.textContent += ch; await sleep(30 + Math.random() * 36); }   // typing the doubt
+
+    await sleep(450);
+
+    send.classList.add("press"); await sleep(150); send.classList.remove("press");
+
+    qEl.textContent = "";
+
+    const u = userMsg(s.question); msgs.append(u); await nextFrame(); u.classList.add("on");
+
+    await sleep(700);
+
+    const { m, main } = botMsg(); const d = dots(); main.append(d);
+
+    msgs.append(m); await nextFrame(); m.classList.add("on");
+
+    await sleep(1200);
+
+    d.remove();
+
+    const p = document.createElement("p"); p.className = "a-text"; const ws = words(s.answer); p.append(...ws); main.append(p);
+
+    await nextFrame();
+
+    for (const w of ws) { w.classList.add("on"); await sleep(48); }
+
+    await sleep(350);
+
+    const { ex, els } = excerpt(s.lines); main.append(ex);
+
+    await nextFrame(); ex.classList.add("on"); await sleep(300);
+
+    for (const l of els) { l.classList.add("on"); await sleep(450); }
+
+    await sleep(4600);
+
+  }
+
+  async function loop() {
+
+    let i = 0;
+
+    for (;;) {
+
+      if (chat.offsetParent === null) { await sleep(800); continue; }   // hidden on phones
+
+      await play(SCENES[i++ % SCENES.length]);
+
+    }
+
+  }
+
+  function renderStatic(s) {
+
+    $("#mTitle").textContent = s.title; $("#mDate").textContent = s.date;
+
+    msgs.append(userMsg(s.question));
+
+    const { m, main } = botMsg(); const p = document.createElement("p"); p.className = "a-text";
+
+    const ws = words(s.answer); p.append(...ws); main.append(p);
+
+    const { ex, els } = excerpt(s.lines); main.append(ex); msgs.append(m);
+
+    [...msgs.children, ex, ...els, ...ws].forEach(el => el.classList.add("on"));
+
+  }
+
+  /* soft twinkling stars behind the chat */
+
+  const stage = $("#stage"), sc = $("#stars"), sx = sc.getContext("2d");
+
+  let SW = 0, SH = 0, stars = [];
+
+  function fitStars() {
+
+    const r = stage.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    SW = r.width; SH = r.height;
+
+    sc.width = Math.round(SW * dpr); sc.height = Math.round(SH * dpr);
+
+    sx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    stars = Array.from({ length: clamp(Math.round(SW * SH / 9000), 20, 140) }, () => ({
+
+      x: Math.random() * SW, y: Math.random() * SH, r: Math.random() * 1.2 + .3,
+
+      tw: Math.random() * 6.28, sp: .5 + Math.random() * 1.5, vy: -(.004 + Math.random() * .016),
+
+      c: Math.random() > .8 ? "110,240,196" : "224,212,255"
+
+    }));
+
+  }
+
+  let last = performance.now();
+
+  function frame(now) {
+
+    const dt = Math.min(.05, (now - last) / 1000); last = now;
+
+    if (SW) {
+
+      sx.clearRect(0, 0, SW, SH);
+
+      for (const s of stars) {
+
+        if (!reduce) { s.y += s.vy * dt * 60; if (s.y < -4) { s.y = SH + 4; s.x = Math.random() * SW; } }
+
+        const a = .2 + .7 * (.5 + .5 * Math.sin(now / 1000 * s.sp + s.tw));
+
+        sx.fillStyle = `rgba(${s.c},${a.toFixed(3)})`;
+
+        sx.beginPath(); sx.arc(s.x, s.y, s.r, 0, 6.2832); sx.fill();
+
+      }
+
+    }
+
+    if (!reduce) requestAnimationFrame(frame);
+
+  }
+
+  new ResizeObserver(() => { fitStars(); if (reduce) frame(0); }).observe(stage);
+
+  fitStars();
+
+  if (reduce) { renderStatic(SCENES[0]); frame(0); } else { requestAnimationFrame(frame); loop(); }
+
+  /* ════════════════════════════════════════════════════════════
+
+     2. FORM
+
+     ════════════════════════════════════════════════════════════ */
+
+  const wrap = $("#formWrap"), form = $("#authForm"), cta = $("#cta"), ctaLbl = $("#ctaLbl");
+
+  const COPY = {
+
+    signin: { title: "Sign in", sub: "Welcome back. Enter your details to continue.", cta: "Sign in",
+
+              alt: ["New to NexRecall?", "Create an account", "signup"], doc: "Sign in · NexRecall" },
+
+    signup: { title: "Create your account", sub: "Start asking questions about your meetings.", cta: "Create account",
+
+              alt: ["Already have an account?", "Sign in", "signin"], doc: "Create account · NexRecall" },
+
+    reset:  { title: "Reset your password", sub: "Enter your email and we’ll send you a reset link.", cta: "Send reset link",
+
+              alt: ["Remembered it?", "Back to sign in", "signin"], doc: "Reset password · NexRecall" }
+
+  };
+
+  let mode = "signin", busy = false;
+
+  const touched = {};
+
+  const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+  const fields = {
+
+    name:     { el: $("#name"),     modes: ["signup"], check: v => v.trim().length < 2 ? "Enter your full name." : "" },
+
+    email:    { el: $("#email"),    modes: ["signin", "signup", "reset"],
+
+                check: v => !v.trim() ? "Enter your work email." : !EMAIL.test(v.trim()) ? "Enter a valid email, like name@company.com." : "" },
+
+    password: { el: $("#password"), modes: ["signin", "signup"],
+
+                check: v => mode === "signin" ? (v ? "" : "Enter your password.") : (v.length < 8 ? "Use at least 8 characters." : "") },
+
+    terms:    { el: $("#terms"),    modes: ["signup"], check: (v, el) => el.checked ? "" : "Accept the terms to continue." }
+
+  };
+
+  function setErr(key, msg) {
+
+    const f = fields[key], box = f.el.closest(".field");
+
+    $(`#${key}-err`).textContent = msg;
+
+    box.classList.toggle("invalid", !!msg);
+
+    f.el.setAttribute("aria-invalid", msg ? "true" : "false");
+
+  }
+
+  function validate(key, show = true) {
+
+    const f = fields[key];
+
+    if (!f.modes.includes(mode)) return "";
+
+    const msg = f.check(f.el.value, f.el);
+
+    if (show) setErr(key, msg);
+
+    return msg;
+
+  }
+
+  function clearErrors() { Object.keys(fields).forEach(k => { setErr(k, ""); touched[k] = false; }); formError(""); }
+
+  function formError(msg) { const box = $("#formError"); $(".err", box).textContent = msg; box.classList.toggle("on", !!msg); }
+
+  Object.entries(fields).forEach(([key, f]) => {
+
+    f.el.addEventListener("blur", () => { touched[key] = true; validate(key); });
+
+    f.el.addEventListener(key === "terms" ? "change" : "input", () => {
+
+      if (touched[key] || key === "terms") validate(key);
+
+      formError("");
+
+    });
+
+  });
+
+  function setMode(next) {
+
+    if (next === mode || busy) return;
+
+    mode = next; wrap.dataset.mode = next;
+
+    const c = COPY[next], head = $("#formHead");
+
+    head.classList.add("swap");
+
+    setTimeout(() => { $("#title").textContent = c.title; $("#sub").textContent = c.sub; ctaLbl.textContent = c.cta; head.classList.remove("swap"); }, 150);
+
+    $("#altText").textContent = c.alt[0]; const alt = $("#altBtn"); alt.textContent = c.alt[1]; alt.dataset.go = c.alt[2];
+
+    $("#password").setAttribute("autocomplete", next === "signup" ? "new-password" : "current-password");
+
+    document.title = c.doc;
+
+    clearErrors();
+
+  }
+
+  document.addEventListener("click", e => { const go = e.target.closest("[data-go]"); if (go) setMode(go.dataset.go); });
+
+  const pw = $("#password");
+
+  $("#eye").addEventListener("click", e => {
+
+    const show = pw.type === "password";
+
+    pw.type = show ? "text" : "password";
+
+    e.currentTarget.setAttribute("aria-pressed", String(show));
+
+    e.currentTarget.setAttribute("aria-label", show ? "Hide password" : "Show password");
+
+  });
+
+  function setCTA(state) { cta.dataset.state = state; cta.disabled = state !== "idle"; busy = state !== "idle"; }
+
+  function shake() { cta.classList.remove("shake"); void cta.offsetWidth; cta.classList.add("shake"); }
+
+  cta.addEventListener("animationend", e => { if (e.animationName === "shake") cta.classList.remove("shake"); });
+
+  async function submitAuth(m, payload) {
+
+    if (CONFIG.DEMO) { await sleep(1200); return { ok: true }; }
+
+    const res = await fetch(CONFIG.endpoints[m], {
+
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(payload)
+
+    });
+
+    const body = await res.json().catch(() => ({}));
+
+    if (!res.ok) throw new Error(body.message || "We couldn’t complete that. Check your details and try again.");
+
+    return body;
+
+  }
+
+  const friendly = err => err instanceof TypeError ? "Can’t reach the server. Check your connection and try again." : (err.message || "Something went wrong. Try again.");
+
+  form.addEventListener("submit", async e => {
+
+    e.preventDefault();
+
+    if (busy) return;
+
+    let first = null;
+
+    for (const k of Object.keys(fields)) { touched[k] = true; if (validate(k) && !first) first = k; }
+
+    if (first) { fields[first].el.focus(); shake(); return; }
+
+    const payload = { email: fields.email.el.value.trim() };
+
+    if (mode !== "reset") payload.password = pw.value;
+
+    if (mode === "signup") payload.name = fields.name.el.value.trim();
+
+    const submittedMode = mode;
+
+    formError(""); setCTA("loading");
+
+    try {
+
+      await submitAuth(submittedMode, payload);
+
+      setCTA("success"); await sleep(700);
+
+      showDone(submittedMode, payload);
+
+    } catch (err) {
+
+      setCTA("idle"); formError(friendly(err)); shake();
+
+    }
+
+  });
+
+
+
+  function showDone(m, data) {
+
+    const ring = $("#doneRing"), prog = $("#prog"), back = $("#backBtn");
+
+    const first = (data.name || "").split(/\s+/)[0];
+
+    if (m === "reset") {
+
+      $("#doneTitle").textContent = "Check your inbox.";
+
+      $("#doneText").textContent = `If an account exists for ${data.email}, a reset link is on its way.`;
+
+      prog.hidden = true; back.hidden = false;
+
+    } else {
+
+      $("#doneTitle").textContent = m === "signup" && first ? `Welcome, ${first}.` : "You’re signed in.";
+
+      $("#doneText").textContent = m === "signup" ? "Your account is ready. Opening your meetings…" : "Opening your meetings…";
+
+      prog.hidden = false; back.hidden = true;
+
+    }
+
+    wrap.dataset.view = "done";
+
+    ring.classList.remove("play"); void ring.getBoundingClientRect(); ring.classList.add("play");
+
+    prog.classList.remove("go");
+
+    if (m !== "reset") {
+
+      requestAnimationFrame(() => requestAnimationFrame(() => prog.classList.add("go")));
+
+      setTimeout(() => {
+
+        if (CONFIG.DEMO) {
+
+          $("#doneText").textContent = `Demo mode: your app would redirect to ${CONFIG.redirect} here.`;
+
+          back.hidden = false;
+
+        } else {
+
+          window.location.assign(CONFIG.redirect);
+
+        }
+
+      }, 2400);
+
+    }
+
+  }
+
+  $("#backBtn").addEventListener("click", () => {
+
+    wrap.dataset.view = "main"; setCTA("idle");
+
+    pw.value = ""; clearErrors();
+
+    if (mode === "reset") setMode("signin");
+
+  });
+
+})();
+
+</script>
+
+</body>
+
+</html>
